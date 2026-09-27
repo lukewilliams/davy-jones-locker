@@ -208,5 +208,7 @@ RUNNER_URL=http://127.0.0.1:9002 uvicorn davy_jones_locker.main:app --port 9001
 uvicorn davy_jones_locker.sandbox.server:app --port 9002
 ```
 
-(On Windows the runner can't set its process limits, and there's no container
-around it: development only.)
+(There's no container around the runner here: development only. On macOS it
+can't limit a script's memory (the system refuses RLIMIT_AS), and on Windows
+it sets no process limits at all. In the Linux container every limit applies,
+and a run fails rather than go without one.)

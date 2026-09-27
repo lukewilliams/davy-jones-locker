@@ -59,14 +59,24 @@ def set_limits() -> None:
     """In the worker process, before it starts (POSIX only)."""
     import resource
 
+    def limit(kind: int, value: tuple[int, int]) -> None:
+        try:
+            resource.setrlimit(kind, value)
+        except (ValueError, OSError):
+            # On Linux (the runner's container) every limit must hold, so a
+            # failure stops the run. Elsewhere, for development only, a limit
+            # the system refuses is skipped: macOS won't set RLIMIT_AS.
+            if sys.platform.startswith("linux"):
+                raise
+
     os.setsid()  # its own process group, so a timeout kills everything it started
     memory = MEMORY_MB * 1024 * 1024 * 2
-    resource.setrlimit(resource.RLIMIT_AS, (memory, memory))
+    limit(resource.RLIMIT_AS, (memory, memory))
     # A little over the wall clock, so that stops a busy single thread first;
     # this stops several busy threads, which use CPU time faster.
-    resource.setrlimit(resource.RLIMIT_CPU, (TIMEOUT + 5, TIMEOUT + 10))
-    resource.setrlimit(resource.RLIMIT_NOFILE, (256, 256))
-    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    limit(resource.RLIMIT_CPU, (TIMEOUT + 5, TIMEOUT + 10))
+    limit(resource.RLIMIT_NOFILE, (256, 256))
+    limit(resource.RLIMIT_CORE, (0, 0))
 
 
 def worker_env(workdir: str) -> dict[str, str]:

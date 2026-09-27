@@ -23,8 +23,8 @@ uvicorn davy_jones_locker.sandbox.server:app --port 9002
 RUNNER_URL=http://127.0.0.1:9002 uvicorn davy_jones_locker.main:app --port 9001
 ```
 
-Here the runner has no container around it (and on Windows it can't apply
-its process limits either): this is for development only. `docker compose -f
+Here the runner has no container around it (and it can't limit memory on
+macOS, or apply any process limits on Windows): this is for development only. `docker compose -f
 davy-jones-locker/compose.yaml up --build` runs both as they're meant to run.
 
 ## Before you open a pull request

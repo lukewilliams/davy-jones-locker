@@ -51,6 +51,7 @@ These are documented, and reports of them alone aren't needed:
   sanitise documents that come from sources you don't control (see
   `seamonster/widgets/doc/README.md`).
 - **Running the engine outside Docker** (for development) has no container
-  around the runner, and on Windows no process limits.
+  around the runner; on macOS scripts have no memory limit, and on Windows
+  no process limits at all.
 - **The development passwords** in the `.env.example` files are examples:
   change them anywhere but your own machine.
