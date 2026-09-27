@@ -1,0 +1,44 @@
+{
+  "name": "davy-jones-locker",
+  "version": "0.1.0",
+  "description": "An app framework for flowgraphs on SEAMONSTER: the browser shell (engine client, DuckDB-wasm, storage). Its Python engine is davy-jones-locker on PyPI.",
+  "license": "Apache-2.0",
+  "author": "Luke Williams",
+  "homepage": "https://github.com/lukewilliams/davy-jones-locker/tree/main/davy-jones-locker#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lukewilliams/davy-jones-locker.git",
+    "directory": "davy-jones-locker/app"
+  },
+  "bugs": {
+    "url": "https://github.com/lukewilliams/davy-jones-locker/issues"
+  },
+  "keywords": [
+    "vue",
+    "vue3",
+    "flowgraph",
+    "data-pipeline",
+    "duckdb",
+    "duckdb-wasm",
+    "framework"
+  ],
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "vite build"
+  },
+  "peerDependencies": {
+    "seamonster": "^0.1.0",
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.9",
+    "vite": "^8.3.0",
+    "vue": "^3.5.42"
+  }
+}

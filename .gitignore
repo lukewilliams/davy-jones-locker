@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+
+# Settings: copy the .env.example beside each. Never committed (secrets,
+# database passwords, the runner's limits).
+.env
+*.env
+!*.env.example
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+# The engine's sdist and wheel (python -m build). Not the npm packages'
+# dist/, which is committed.
+davy-jones-locker/engine/dist/
+davy-jones-locker/engine/build/
+
+# npm
+*.tgz
+npm-debug.log*
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

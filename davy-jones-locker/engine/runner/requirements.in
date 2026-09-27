@@ -1,0 +1,14 @@
+# The Python sandbox: its server, and the libraries scripts can import. Adding
+# a library here (then recompiling and rebuilding the image) is how one is
+# enabled; scripts can't install anything themselves. Compile to
+# requirements.txt (pinned, with hashes):
+#   uv pip compile runner/requirements.in --generate-hashes --python-version 3.12 --python-platform linux -o runner/requirements.txt
+
+# The server
+fastapi==0.141.1
+uvicorn==0.53.0
+
+# Libraries scripts can import (the engine's AI assistant reads this list)
+pandas==3.0.6
+numpy==2.5.3
+pyarrow==25.0.1

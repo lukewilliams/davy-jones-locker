@@ -1,0 +1,1277 @@
+/* ============================================================
+ * SEAMONSTER's flowgraph editor: standalone, dark only.
+ * The editor's tokens (--flow-*) and every one of its rules.
+ * ============================================================ */
+
+/* ---- Theme tokens ---- */
+:root {
+  --flow-panel: rgba(255, 255, 255, 0.04);
+  --flow-panel-border: rgba(255, 255, 255, 0.08);
+  --flow-text: #e7e8ea;
+  --flow-text-muted: #8b8d93;
+  --flow-text-faint: #5b5d63;
+  --flow-accent: #4d7dfb;
+  --flow-accent-soft: rgb(77 125 251 / 0.15);
+  /* The brand gradient (title, hovered panel titles and menu items), blue to
+   * teal and back. FlowgraphEditor's `gradient` prop sets these on the window. */
+  --flow-brand-from: #4d7dfb;
+  --flow-brand-to: #2dd4bf;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  --flow-error: #f87171;
+  --flow-table-header-bg: #141416; /* opaque, so rows scroll under it */
+
+  --flow-editor-bg: #000;
+  --flow-blur: 12px;
+  --flow-panel-radius: 1rem; /* also the gap between a docked panel and the window edge */
+  --flow-panel-rail-radius: 0.375rem; /* collapsed panel rail */
+  --flow-node-width: 190px;
+  --flow-node-height: 90px;
+
+  --flow-canvas-dots: rgba(255, 255, 255, 0.08);
+
+  /* Wires (PipelineEdge.tsx) */
+  --flow-wire-width: 2px;
+  --flow-wire-idle: rgba(255, 255, 255, 0.65);
+  --flow-wire-dormant: #fff; /* not black, which would vanish on the black window */
+  --flow-wire-silver-from: #f5f5f7;
+  --flow-wire-silver-to: #c7c9cf;
+  --flow-wire-transition: 300ms ease;
+
+  color-scheme: dark;
+}
+
+/* ---- Window (standalone, solid black) ---- */
+.flow-editor {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--flow-editor-bg);
+  color: var(--flow-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  /* Thin, dark scrollbars in panels (a classic one would squeeze the Library
+   * down to one column of cards). */
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.15) transparent;
+}
+
+.flow-editor:focus,
+.flow-editor:focus-visible {
+  outline: none;
+}
+
+.flow-canvas-layer {
+  position: absolute;
+  inset: 0;
+}
+
+/* ---- Title + breadcrumb ---- */
+.flow-title-bar {
+  position: absolute;
+  top: 1.25rem;
+  left: 1.25rem;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.flow-title {
+  cursor: default;
+  user-select: none;
+}
+
+.flow-title-text {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.025em;
+}
+
+/* Brand gradient text (--flow-brand-*) */
+.flow-brand-text {
+  background-image: linear-gradient(90deg, var(--flow-brand-from), var(--flow-brand-to), var(--flow-brand-from));
+  background-size: 200% 100%;
+  background-position: 0% 50%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+
+/* ---- Brand gradient pan ----
+ * State A (rest):    gradient is static at 0% (--flow-brand-from to -to).
+ * State B (panning): gradient scrolls continuously, looping every 1.5s.
+ * Triggers for state B (pick either):
+ *   1. CSS hover: hover any .flow-pan-trigger ancestor (like Tailwind's `group`)
+ *   2. Script:    add .is-panning to the trigger or to the text itself */
+@keyframes flow-brand-pan {
+  from { background-position: 0% 50%; }
+  to   { background-position: -200% 50%; }
+}
+
+/* State A: rest (explicit, so state B always starts from the same spot) */
+.flow-brand-text {
+  animation: none;
+  background-position: 0% 50%;
+}
+
+/* State B: panning */
+.flow-pan-trigger:hover .flow-brand-text,
+.flow-pan-trigger.is-panning .flow-brand-text,
+.flow-brand-text.is-panning {
+  animation: flow-brand-pan 1.5s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flow-pan-trigger:hover .flow-brand-text,
+  .flow-pan-trigger.is-panning .flow-brand-text,
+  .flow-brand-text.is-panning {
+    animation: none;
+  }
+}
+
+.flow-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.flow-breadcrumb-segment {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.flow-breadcrumb-separator {
+  color: var(--flow-text-faint);
+}
+
+.flow-breadcrumb-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  color: var(--flow-text-faint);
+  transition: color 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.flow-breadcrumb-link:hover {
+  color: var(--flow-text);
+}
+
+.flow-breadcrumb-current {
+  font-weight: 500;
+  color: var(--flow-text);
+}
+
+/* ---- Floating panels: frosted glass (FlowPanel.tsx) ----
+ * Set left/top/width/height inline. Minimum size in the original is 200 x 140. */
+.flow-panel {
+  position: absolute;
+  z-index: 5;
+  overflow: hidden;
+  border: 1px solid var(--flow-panel-border);
+  border-radius: var(--flow-panel-radius);
+  background-color: var(--flow-panel);
+  backdrop-filter: blur(var(--flow-blur));
+  -webkit-backdrop-filter: blur(var(--flow-blur));
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.4);
+}
+
+/* Docked panels (.flow-panel--dock-left/right/bottom) get their rect and
+ * z-index inline from panelLayout.js, inset from the window edge by
+ * --flow-panel-radius. State hooks: .is-active, .is-unlinked. */
+
+/* Plain light text (see "Panel titles and rails" below).
+ * Rendered as a <button> when the panel is collapsible. */
+.flow-panel-title {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+  cursor: default;
+  user-select: none;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+button.flow-panel-title {
+  padding: 0;
+  border: 0;
+  background-color: transparent;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* Unlinked panels are dragged by the title (a click still collapses). */
+.flow-panel.is-unlinked .flow-panel-title {
+  cursor: move;
+}
+
+/* ---- Panel rails ----
+ * A panel's title as a button in the gap on its docked edge, shown while the
+ * panel is collapsed. On an edge shared by several panels, once any of them is
+ * unlinked, the open ones show too (.is-open), since they can cover each other.
+ * Rails on one edge stack around that edge's centre. Each has the
+ * panel's frosted look and a tighter radius, bordered on every side but the
+ * window edge. */
+.flow-rail-group {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  gap: 0.25rem;
+}
+
+.flow-rail-group--left,
+.flow-rail-group--right {
+  top: 50%;
+  flex-direction: column;
+  transform: translateY(-50%);
+}
+
+.flow-rail-group--left  { left: 0; }
+.flow-rail-group--right { right: 0; }
+
+.flow-rail-group--bottom {
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.flow-panel-rail {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem 0;
+  border: 1px solid var(--flow-panel-border);
+  background-color: var(--flow-panel);
+  backdrop-filter: blur(var(--flow-blur));
+  -webkit-backdrop-filter: blur(var(--flow-blur));
+  cursor: pointer;
+}
+
+.flow-panel-rail--left,
+.flow-panel-rail--right {
+  width: var(--flow-panel-radius);
+}
+
+.flow-panel-rail--left {
+  border-left: 0;
+  border-radius: 0 var(--flow-panel-rail-radius) var(--flow-panel-rail-radius) 0;
+}
+
+.flow-panel-rail--right {
+  border-right: 0;
+  border-radius: var(--flow-panel-rail-radius) 0 0 var(--flow-panel-rail-radius);
+}
+
+.flow-panel-rail--bottom {
+  height: var(--flow-panel-radius);
+  padding: 0 0.75rem;
+  border-bottom: 0;
+  border-radius: var(--flow-panel-rail-radius) var(--flow-panel-rail-radius) 0 0;
+}
+
+.flow-panel-rail-text {
+  user-select: none;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+/* Rotated 90deg CCW: vertical-rl + 180deg reads bottom to top. */
+.flow-panel-rail--right .flow-panel-rail-text {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+
+/* Rotated 90deg CW: vertical-rl alone reads top to bottom. */
+.flow-panel-rail--left .flow-panel-rail-text {
+  writing-mode: vertical-rl;
+}
+
+/* Panel titles and rails: plain light text. */
+.flow-panel-title,
+.flow-panel-rail-text {
+  color: var(--flow-text);
+}
+
+/* ---- Panel title hover ----
+ * Hovering a panel title or its link button pans the brand gradient (see
+ * .flow-brand-text) across both the title and the link icon, in place of the
+ * plain title and icon. Hovering a rail does the same for its text. */
+.flow-panel-title:hover,
+.flow-panel:has(.flow-panel-link-btn:hover) .flow-panel-title,
+.flow-panel-rail:hover .flow-panel-rail-text {
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+
+@keyframes flow-brand-pan-vertical {
+  from { background-position: 50% 0%; }
+  to   { background-position: 50% -200%; }
+}
+
+.flow-panel-title:hover,
+.flow-panel:has(.flow-panel-link-btn:hover) .flow-panel-title,
+.flow-panel-link-btn:hover .flow-panel-link-icon,
+.flow-panel:has(.flow-panel-title:hover) .flow-panel-link-icon,
+.flow-panel-rail--bottom:hover .flow-panel-rail-text {
+  background-image: linear-gradient(90deg, var(--flow-brand-from), var(--flow-brand-to), var(--flow-brand-from));
+  background-size: 200% 100%;
+  animation: flow-brand-pan 1.5s linear infinite;
+}
+
+/* Vertical rail text: gradient and pan run along the text, which is top to
+ * bottom in the unrotated box (the right rail's 180deg turn keeps that true). */
+.flow-panel-rail--left:hover .flow-panel-rail-text,
+.flow-panel-rail--right:hover .flow-panel-rail-text {
+  background-image: linear-gradient(180deg, var(--flow-brand-from), var(--flow-brand-to), var(--flow-brand-from));
+  background-size: 100% 200%;
+  animation: flow-brand-pan-vertical 1.5s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flow-panel-title:hover,
+  .flow-panel:has(.flow-panel-link-btn:hover) .flow-panel-title,
+  .flow-panel-link-btn:hover .flow-panel-link-icon,
+  .flow-panel:has(.flow-panel-title:hover) .flow-panel-link-icon,
+  .flow-panel-rail:hover .flow-panel-rail-text {
+    animation: none;
+  }
+}
+
+/* Body: BODY_TOP = 32px, BODY_INSET = 6px */
+.flow-panel-body {
+  position: absolute;
+  top: 32px;
+  right: 6px;
+  bottom: 6px;
+  left: 6px;
+  overflow: hidden;
+}
+
+/* ---- Panel contents ---- */
+.flow-panel-empty {
+  margin: 0;
+  padding: 0.25rem 0.375rem;
+  font-size: 12px;
+  color: var(--flow-text-faint);
+}
+
+/* Form fields (the Manage panel): a scrolling column. */
+.flow-props {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  height: 100%;
+  overflow-y: auto;
+  padding: 0.25rem 0.375rem 0.5rem;
+}
+
+.flow-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.flow-field-label {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+  color: var(--flow-text-faint);
+}
+
+.flow-field-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 0.375rem 0.5rem;
+  border: 1px solid var(--flow-panel-border);
+  border-radius: 0.5rem;
+  background-color: rgb(0 0 0 / 0.3);
+  color: var(--flow-text);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.flow-field-input::placeholder {
+  color: var(--flow-text-faint);
+}
+
+.flow-field-input:focus {
+  border-color: var(--flow-accent);
+}
+
+.flow-field-input.is-invalid {
+  border-color: var(--flow-error);
+}
+
+.flow-field-input--mono,
+.flow-field-prefix {
+  font-family: var(--font-mono);
+}
+
+/* A faint fixed prefix before the input (Output Name's <id>_). */
+.flow-field-prefixed {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.flow-field-prefix {
+  flex: none;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--flow-text-faint);
+}
+
+.flow-field-hint,
+.flow-field-error {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.flow-field-hint  { color: var(--flow-text-faint); }
+.flow-field-error { color: var(--flow-error); }
+
+/* Something to know before running (a node that sends data to the server). */
+.flow-field-note {
+  margin: 0;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--flow-panel-border);
+  border-left: 2px solid var(--flow-accent);
+  border-radius: 0.5rem;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--flow-text-muted);
+}
+
+.flow-field-note.is-warning {
+  border-left-color: var(--flow-error);
+}
+
+.flow-field-hint code {
+  font-family: var(--font-mono);
+  color: var(--flow-text-muted);
+}
+
+/* The SQL editor: a monospace textarea (for now). */
+.flow-field-code {
+  min-height: 6rem;
+  line-height: 1.5;
+  resize: vertical;
+  tab-size: 2;
+}
+
+/* The AI assistant: a request box with its Write button, then what it's doing
+ * or its note (with Undo), then what it sends. */
+.flow-assist {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.flow-assist-input {
+  min-height: 2.5rem;
+  line-height: 1.4;
+  resize: vertical;
+}
+
+.flow-assist .flow-button {
+  align-self: stretch;
+}
+
+.flow-assist-status {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+/* A checkbox as a field-looking row: its label, then the box at the right. */
+.flow-field-check {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  border: 1px solid var(--flow-panel-border);
+  border-radius: 0.5rem;
+  background-color: rgb(0 0 0 / 0.3);
+  font-size: 12px;
+  color: var(--flow-text);
+  cursor: pointer;
+}
+
+.flow-field-check input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--flow-accent);
+  cursor: pointer;
+}
+
+.flow-field-select {
+  cursor: pointer;
+}
+
+/* A text field with a button at its right end that opens a list (an editor
+ * menu) to choose from. */
+.flow-field-combo {
+  position: relative;
+}
+
+.flow-field-combo .flow-field-input {
+  padding-right: 1.75rem;
+}
+
+.flow-field-combo-button {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0 0.5rem 0.5rem 0;
+  background: none;
+  color: var(--flow-text-muted);
+  cursor: pointer;
+}
+
+.flow-field-combo-button:hover {
+  color: var(--flow-text);
+}
+
+.flow-field-combo-button svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.flow-field-select option {
+  background-color: var(--flow-table-header-bg);
+  color: var(--flow-text);
+}
+
+/* A file input, shown as a button: the input itself is invisible over it. */
+.flow-file {
+  position: relative;
+  box-sizing: border-box;
+  padding: 0.375rem 0.5rem;
+  border: 1px dashed var(--flow-panel-border);
+  border-radius: 0.5rem;
+  background-color: rgb(0 0 0 / 0.3);
+  font-size: 12px;
+  text-align: center;
+  color: var(--flow-text-muted);
+  cursor: pointer;
+  transition: border-color 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.flow-file:hover,
+.flow-file:focus-within {
+  border-color: var(--flow-accent);
+  color: var(--flow-text);
+}
+
+.flow-file.is-busy {
+  cursor: progress;
+}
+
+.flow-file-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: inherit;
+}
+
+/* A suggested edit, in the accent colour (DataIngest's rename to its file). */
+.flow-suggestion {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  color: var(--flow-accent);
+  cursor: pointer;
+}
+
+.flow-suggestion:hover {
+  text-decoration: underline;
+}
+
+.flow-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* The Run / Execute Graph button (accent), and quieter ones (the pager).
+ * Unavailable buttons use aria-disabled, not disabled: a disabled button
+ * drops keyboard focus out of the window, and with it the editor's hotkeys. */
+.flow-button {
+  align-self: flex-start;
+  padding: 0.375rem 0.875rem;
+  border: 1px solid var(--flow-accent);
+  border-radius: 0.5rem;
+  background-color: var(--flow-accent-soft);
+  color: var(--flow-text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.flow-button:hover:not([aria-disabled="true"]) {
+  background-color: rgb(77 125 251 / 0.28);
+}
+
+.flow-button[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.flow-button--wide {
+  flex: 1;
+  align-self: stretch;
+  padding-block: 0.5rem;
+}
+
+.flow-button--quiet {
+  padding: 0.125rem 0.5rem;
+  border-color: var(--flow-panel-border);
+  background-color: transparent;
+  font-size: 11px;
+}
+
+.flow-button--quiet:hover:not([aria-disabled="true"]) {
+  background-color: rgb(255 255 255 / 0.06);
+}
+
+/* The Data panel: tabs when the output has several tables, then a scrolling
+ * table of one page of rows, then the pager. */
+.flow-data-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  height: 100%;
+}
+
+.flow-data-tabs > .flow-data {
+  flex: 1;
+  min-height: 0;
+}
+
+.flow-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.flow-tab {
+  padding: 0.125rem 0.625rem;
+  border: 1px solid var(--flow-panel-border);
+  border-radius: 9999px;
+  background: none;
+  font: inherit;
+  font-size: 11px;
+  color: var(--flow-text-faint);
+  cursor: pointer;
+}
+
+.flow-tab:hover {
+  color: var(--flow-text);
+}
+
+.flow-tab[aria-selected="true"] {
+  border-color: var(--flow-accent);
+  background-color: var(--flow-accent-soft);
+  color: var(--flow-text);
+}
+
+.flow-data {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  height: 100%;
+}
+
+.flow-table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--flow-panel-border);
+  border-radius: 0.5rem;
+}
+
+.flow-table {
+  border-collapse: collapse;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.flow-table th {
+  position: sticky;
+  top: 0;
+  padding: 0.25rem 0.5rem;
+  background-color: var(--flow-table-header-bg);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.025em;
+  text-align: left;
+  text-transform: uppercase;
+  color: var(--flow-text-faint);
+}
+
+.flow-table td {
+  padding: 0.25rem 0.5rem;
+  border-top: 1px solid var(--flow-panel-border);
+}
+
+.flow-pager {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 11px;
+  color: var(--flow-text-faint);
+}
+
+/* A script's value that isn't a table: its type, then the value. */
+.flow-value {
+  height: 100%;
+  overflow: auto;
+  padding: 0.25rem 0.375rem;
+}
+
+.flow-value-type {
+  margin: 0 0 0.375rem;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+  color: var(--flow-text-faint);
+}
+
+.flow-value-text {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The Console panel: one message, or an error. */
+.flow-console {
+  box-sizing: border-box;
+  height: 100%;
+  overflow: auto;
+}
+
+.flow-console-line {
+  margin: 0;
+  padding: 0.25rem 0.375rem;
+  font-size: 12px;
+}
+
+.flow-console-note {
+  color: var(--flow-text-muted);
+}
+
+/* What a script printed. */
+.flow-console-output {
+  margin: 0;
+  padding: 0.25rem 0.375rem;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--flow-text);
+}
+
+.flow-console-error {
+  margin: 0;
+  padding: 0.25rem 0.375rem;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--flow-error);
+}
+
+/* The Library: category sections of node cards, scrolling. */
+.flow-library {
+  box-sizing: border-box;
+  height: 100%;
+  overflow-y: auto;
+  padding: 0.25rem 0.375rem 0.5rem;
+}
+
+.flow-library-section + .flow-library-section {
+  margin-top: 1rem;
+}
+
+.flow-library-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin: 0 0 0.5rem;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+  color: var(--flow-text-faint);
+}
+
+.flow-library-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background-image: linear-gradient(135deg, var(--node-color-from), var(--node-color-to));
+}
+
+.flow-library-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+/* A node face at 190 x 90, scaled to 100px wide. */
+.flow-library-card {
+  width: 100px;
+  height: calc(var(--flow-node-height) * 100 / 190);
+  cursor: grab;
+}
+
+.flow-library-card .flow-node-face {
+  width: var(--flow-node-width);
+  height: var(--flow-node-height);
+  transform: scale(calc(100 / 190));
+  transform-origin: top left;
+}
+
+/* Resize strips flush on the border (edges 6px, corners 12px) */
+.flow-panel-resize { position: absolute; }
+.flow-panel-resize--n  { top: 0; left: 0.5rem; right: 0.5rem; height: 6px; cursor: ns-resize; }
+.flow-panel-resize--s  { bottom: 0; left: 0.5rem; right: 0.5rem; height: 6px; cursor: ns-resize; }
+.flow-panel-resize--e  { right: 0; top: 0.5rem; bottom: 0.5rem; width: 6px; cursor: ew-resize; }
+.flow-panel-resize--w  { left: 0; top: 0.5rem; bottom: 0.5rem; width: 6px; cursor: ew-resize; }
+.flow-panel-resize--ne { top: 0; right: 0; width: 12px; height: 12px; cursor: nesw-resize; }
+.flow-panel-resize--sw { bottom: 0; left: 0; width: 12px; height: 12px; cursor: nesw-resize; }
+.flow-panel-resize--nw { top: 0; left: 0; width: 12px; height: 12px; cursor: nwse-resize; }
+.flow-panel-resize--se { bottom: 0; right: 0; width: 12px; height: 12px; cursor: nwse-resize; }
+
+/* ---- Node categories (pipelineNodeKindMeta.ts) ---- */
+.flow-node--fetch    { --node-color-from: #5bc3f0; --node-color-to: #1f6fd6; --node-label-color: #fff; } /* SQLQuery, 3D Asset, HTTP Request */
+.flow-node--modify   { --node-color-from: #a8de5a; --node-color-to: #4caf3e; --node-label-color: #fff; } /* PythonScript, GeometryScript, HLSL, Network Fuse */
+.flow-node--debug    { --node-color-from: #a5455e; --node-color-to: #5c1a29; --node-label-color: #fff; } /* Debug */
+.flow-node--import   { --node-color-from: #f7b955; --node-color-to: #d1741f; --node-label-color: #fff; } /* DataIngest, DXF Import */
+.flow-node--export   { --node-color-from: #f2716b; --node-color-to: #b02020; --node-label-color: #fff; } /* DataExport */
+.flow-node--custom   { --node-color-from: #f5f5f7; --node-color-to: #c7c9cf; --node-label-color: #000; } /* Subnet, custom nodes */
+.flow-node--boundary { --node-color-from: #8b95a5; --node-color-to: #4a5568; --node-label-color: #fff; } /* Begin, Exit */
+
+/* ---- Node (190 x 90, PipelineCanvas.tsx) ---- */
+.flow-node {
+  position: relative; /* Vue Flow positions the .vue-flow__node wrapper */
+  width: var(--flow-node-width);
+  height: var(--flow-node-height);
+}
+
+.flow-node-face {
+  position: relative;
+  box-sizing: border-box; /* the padding stays inside the node's 190 x 90 */
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  width: 100%;
+  height: 100%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.375rem;
+  background-image: linear-gradient(
+    135deg,
+    var(--node-color-from, #8b95a5),
+    var(--node-color-to, #4a5568)
+  );
+  box-shadow:
+    0 10px 15px -3px rgb(0 0 0 / 0.1),
+    0 4px 6px -4px rgb(0 0 0 / 0.1);
+}
+
+.flow-node-face.is-selected {
+  outline: 2px solid rgb(255 255 255 / 0.9);
+  outline-offset: 2px;
+}
+
+.flow-node-status {
+  font-size: 12px;
+  line-height: 1.25;
+  color: rgb(0 0 0 / 0.75);
+}
+
+.flow-node-label {
+  align-self: flex-end;
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1.25;
+  color: var(--node-label-color, #fff);
+}
+
+/* ---- Node themes (FlowgraphEditor's `theme`, a class on the window) ----
+ * FLOW, the default: rounded, category gradient light to deep (above).
+ * FLOWDARK: FLOW in light to dark grey for every category.
+ * LUX: sharp corners, brushed metal, top to bottom: a deep band (where the
+ * status sits), a hard light edge, a fade back to deep, and the category's
+ * light colour rising towards the bottom (after a Qt brush). Primary is the
+ * category's deep colour, secondary its light one. Names in plain near-white.
+ * LUXDARK: sharp obsidian for every category, with its own gradient (a
+ * softer edge, fading back to deep, no tint); the node under the pointer
+ * shows its category colour down the left edge. */
+/* FLOWDARK: FLOW in grey, light to dark, for every category (set on the face,
+ * so wires, kind tags, hints and menu badges keep the category's colours). */
+.flow-theme-flowdark .flow-node-face {
+  --node-color-from: #161718;
+  --node-color-to: #3b3c3f;
+  --node-label-color: #fff;
+}
+
+.flow-theme-lux .flow-node-face,
+.flow-theme-luxdark .flow-node-face {
+  border-radius: 0;
+  background-image: linear-gradient(
+    180deg,
+    /* var(--node-metal-primary) 20%,
+    var(--node-metal-secondary) 22%,
+    var(--node-metal-primary) 60%,
+    var(--node-color-from) 120% */
+    var(--node-metal-primary) 20%,
+    var(--node-metal-secondary) 22%,
+    var(--node-metal-primary) 110%
+  );
+  --node-label-color: #e8e9ec;
+}
+
+.flow-theme-lux .flow-node-face {
+  --node-metal-primary: var(--node-color-to);
+  --node-metal-secondary: var(--node-color-from);
+}
+
+/* LUXDARK's own plate: deep band, a softer light edge, then a long fade back
+ * to deep (no category tint at the bottom). */
+.flow-theme-luxdark .flow-node-face {
+  background-image: linear-gradient(
+    180deg,
+    var(--node-metal-primary) 20%,
+    var(--node-metal-secondary) 22%,
+    var(--node-metal-primary) 110%
+  );
+  --node-metal-primary: #0b0c10;
+  --node-metal-secondary: #3d414c;
+  --node-status-color: rgb(255 255 255 / 0.62);
+  box-shadow:
+    inset 0 0 0 var(--node-color-from),
+    inset 0 0 0 1px rgb(255 255 255 / 0.1),
+    0 10px 15px -3px rgb(0 0 0 / 0.4);
+  transition: box-shadow 150ms ease;
+}
+
+/* Hovered (the top node only: the pointer reaches just that one). */
+.flow-theme-luxdark .flow-node.is-hovered .flow-node-face {
+  box-shadow:
+    inset 3px 0 0 var(--node-color-from),
+    inset 0 0 0 1px rgb(255 255 255 / 0.1),
+    0 10px 15px -3px rgb(0 0 0 / 0.4);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flow-theme-luxdark .flow-node-face {
+    transition: none;
+  }
+}
+
+/* The status sits in the deep top band (the top 20%, 18px), above the light
+ * edge: lifted from the face's padding and set solid. */
+.flow-theme-lux .flow-node-status,
+.flow-theme-luxdark .flow-node-status {
+  margin-top: -5px;
+  line-height: 1;
+}
+/* Status text reads light on the deep band it sits over (dark on Custom's
+ * silver). */
+.flow-theme-lux .flow-node-status,
+.flow-theme-luxdark .flow-node-status {
+  color: var(--node-status-color, rgb(255 255 255 / 0.75));
+}
+
+.flow-theme-lux .flow-node--custom {
+  --node-status-color: rgb(0 0 0 / 0.7);
+}
+
+/* Custom's silver plate in LUX keeps dark names. */
+.flow-theme-lux .flow-node--custom .flow-node-face {
+  --node-label-color: #1c1d21;
+}
+
+/* A close dark shadow keeps names legible on the lighter metal towards the
+ * bottom, as if cut into it. Custom's dark names don't need it. */
+.flow-theme-lux .flow-node-label,
+.flow-theme-luxdark .flow-node-label {
+  filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.45));
+}
+
+.flow-theme-lux .flow-node--custom .flow-node-label {
+  filter: none;
+}
+
+/* A renamed node's kind, just above its top-left corner. */
+.flow-node-kind {
+  position: absolute;
+  top: -1.4em;
+  left: 0;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.25;
+  white-space: nowrap;
+  color: var(--node-color-from);
+  pointer-events: none;
+}
+
+/* The output's reference name, under the bottom-right corner while an output
+ * pin is hovered. */
+.flow-node-ref-hint {
+  position: absolute;
+  right: 0;
+  bottom: -1.2em;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.25;
+  white-space: nowrap;
+  color: var(--node-color-from);
+  pointer-events: none;
+}
+
+/* ---- Blinking dot: fades off and on twice a second, in its text's colour ---- */
+@keyframes flow-blink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.15; }
+}
+
+.flow-blink-dot {
+  display: inline-block;
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background-color: currentColor;
+  animation: flow-blink 0.5s ease-in-out infinite;
+}
+
+/* Nothing live to signal (the server unavailable): a solid dot. */
+.flow-blink-dot.is-steady {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flow-blink-dot {
+    animation: none;
+  }
+}
+
+/* A node that runs on the server, while it's connected: top right, level
+ * with the status text, in the label's colour. */
+.flow-node-server-dot {
+  position: absolute;
+  top: 0.625rem;
+  right: 0.75rem;
+  width: 10px;
+  height: 10px;
+  color: var(--node-label-color, #fff);
+}
+
+/* The server's state, bottom left in the window's edge gap, coloured by a
+ * node category (.flow-node--modify when connected, --fetch when not). */
+.flow-server-status {
+  position: absolute;
+  bottom: 0;
+  left: var(--flow-panel-radius);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  height: var(--flow-panel-radius);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.025em;
+  white-space: nowrap;
+  color: var(--node-color-from);
+  pointer-events: none;
+  user-select: none;
+  transition: color var(--flow-wire-transition);
+}
+
+/* ---- Handles (PipelineHandle.tsx) ----
+ * Hidden until the node is hovered (.is-hovered, set by FlowNode.vue); filled
+ * once connected. FlowNode.vue sets `top: <n>%` inline per handle. */
+.flow-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border: 1px solid #fff;
+  border-radius: 9999px;
+  background: transparent;
+  opacity: 0;
+  transform: translateY(-50%);
+}
+
+.flow-handle--in  { left: -6px; }
+.flow-handle--out { right: -6px; }
+
+.flow-handle.is-connected {
+  background: #fff;
+}
+
+.flow-node.is-hovered .flow-handle {
+  opacity: 1;
+}
+
+/* ---- Canvas background dots (Vue Flow's <Background>) ---- */
+.flow-canvas-dots circle {
+  fill: var(--flow-canvas-dots);
+}
+
+/* ---- Wires: 2px bezier curves, drawn by FlowWire.vue ----
+ * Solid while their source hasn't run (states 1a/1b below); after that,
+ * per-wire SVG gradients whose stops take the nodes' category classes. */
+.flow-wire {
+  fill: none;
+  stroke-width: var(--flow-wire-width);
+}
+
+.flow-wire-stop-source  { stop-color: var(--node-color-to); }   /* where it leaves the source */
+.flow-wire-stop-target  { stop-color: var(--node-color-from); } /* where it enters the target */
+.flow-wire-stop-dormant { stop-color: var(--flow-wire-dormant); }
+
+/* A selected wire is dashed: gaps in the window's colour, drawn over it, so
+ * any wire (solid or gradient) dashes the same way. */
+.flow-wire-gaps {
+  fill: none;
+  stroke: var(--flow-editor-bg);
+  stroke-width: calc(var(--flow-wire-width) + 1px);
+  stroke-dasharray: 0 6 4 0;
+}
+
+/* Invisible and wider, over the wire, so the 2px wire is easy to click. */
+.flow-wire-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 12px;
+  pointer-events: stroke;
+}
+
+/* State 1a: nothing has run this session */
+.flow-wire--idle {
+  stroke: var(--flow-wire-idle);
+  transition: stroke var(--flow-wire-transition);
+}
+
+/* State 1b: a run has started, this wire's source hasn't finished */
+.flow-wire--waiting {
+  stroke: var(--flow-wire-dormant);
+  transition: stroke var(--flow-wire-transition);
+}
+
+/* The wire being dragged (FlowConnectionLine.vue): silver, from the output end,
+ * until its output node has run (then the stops above). */
+.flow-connection-line-from { stop-color: var(--flow-wire-silver-from); }
+.flow-connection-line-to   { stop-color: var(--flow-wire-silver-to); }
+
+/* States 2 and 3, top layer: source colour to white (--flow-wire-dormant).
+ * The path needs the pathLength="1" attribute (FlowWire.vue).
+ * Add .is-complete when the target finishes to sweep this layer away,
+ * revealing the source-to-target gradient underneath. */
+.flow-wire--grow {
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 0;
+  transition: stroke-dashoffset var(--flow-wire-transition);
+}
+
+.flow-wire--grow.is-complete {
+  stroke-dashoffset: -1; /* negative so it sweeps source to target */
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flow-wire--idle,
+  .flow-wire--waiting,
+  .flow-wire--grow {
+    transition: none;
+  }
+}
+
+/* ---- Panel link toggle ----
+ * Chain icon (broken chain when unlinked), centred on the panel title's line.
+ * Linked panels make room for each other; unlinked panels float freely. */
+.flow-panel-link-btn {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  color: var(--flow-text-muted);
+  transition:
+    transform 150ms cubic-bezier(0.4, 0, 0.2, 1),
+    color 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.flow-panel-link-btn:hover  { color: var(--flow-text); transform: scale(1.1); }
+.flow-panel-link-btn:active { transform: scale(0.95); }
+
+/* The icon is a mask over a background, so it can take the same panning
+ * gradient as the title (hover the title or the button). */
+.flow-panel-link-icon {
+  width: 12px;
+  height: 12px;
+  background-color: currentColor;
+  -webkit-mask: var(--flow-link-icon) center / contain no-repeat;
+  mask: var(--flow-link-icon) center / contain no-repeat;
+}
+
+.flow-panel-link-icon.is-linked {
+  --flow-link-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71'/><path d='M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71'/></svg>");
+}
+
+.flow-panel-link-icon.is-unlinked {
+  --flow-link-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m18.84 12.25 1.72-1.71a5 5 0 0 0-7.07-7.07l-1.72 1.71'/><path d='m5.17 11.75-1.71 1.71a5 5 0 0 0 7.07 7.07l1.71-1.71'/><path d='M8 2v3M2 8h3M16 19v3M19 16h3'/></svg>");
+}

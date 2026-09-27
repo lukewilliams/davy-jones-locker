@@ -1,0 +1,74 @@
+/* Only the CSS needed to make the Reka primitives usable. Opt in with:
+   import 'seamonster/style.css' (every widget's CSS)
+
+   Every value an app is expected to change is a custom property with an inline
+   fallback, so the defaults apply with nothing declared. Set the properties on
+   any ancestor — they inherit. Those tokens are the supported styling contract;
+   the `wc-` class names are internal and may change. */
+
+.wc-control {
+  margin-top: var(--wc-control-gap, 12px);
+}
+.wc-label {
+  display: block;
+  margin-bottom: var(--wc-label-gap, 4px);
+}
+.wc-select-trigger {
+  width: 100%;
+  text-align: left;
+}
+.wc-select-trigger[data-disabled] {
+  opacity: var(--wc-disabled-opacity, 0.5);
+}
+.wc-checkbox-group {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+.wc-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: var(--wc-checkbox-gap, 8px);
+  margin: 4px 0;
+}
+.wc-checkbox {
+  width: var(--wc-checkbox-size, 16px);
+  height: var(--wc-checkbox-size, 16px);
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(var(--wc-checkbox-size, 16px) * 0.75);
+}
+
+/* Select content is portalled to <body>, so it can never be scoped, and it
+   inherits from <body> rather than from the widget that opened it. Set the
+   tokens on :root if a scoped override needs to reach the popover. */
+.wc-select-content {
+  background: var(--wc-surface, #fff);
+  border: 1px solid var(--wc-border, #ddd);
+  border-radius: var(--wc-radius, 6px);
+  padding: 4px;
+  min-width: var(--reka-select-trigger-width);
+  z-index: var(--wc-popover-z, 100);
+}
+.wc-select-item {
+  display: flex;
+  gap: 6px;
+  padding: 4px 8px;
+  cursor: default;
+  outline: none;
+}
+.wc-select-item[data-highlighted] {
+  background: var(--wc-highlight, #f0f0f0);
+}
+
+/* An individually disabled option. The row class greys the label too, which a
+   [data-disabled] on the checkbox alone cannot reach. */
+.wc-option-disabled,
+.wc-select-item[data-disabled] {
+  opacity: var(--wc-disabled-opacity, 0.5);
+}
+.wc-option-disabled {
+  cursor: default;
+}

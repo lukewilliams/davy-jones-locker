@@ -1,0 +1,94 @@
+/* Only the CSS needed to make the menu usable. Opt in with:
+   import 'seamonster/style.css' (every widget's CSS)
+
+   Every value an app or widget is expected to change is a custom property with
+   an inline fallback. Menus are portalled into their MenuHost's element, so they
+   inherit tokens from the widget that owns them: set app defaults on :root and
+   widget overrides on the widget's root. The wm- part classes are public too,
+   for looks the tokens can't express. */
+
+.wm-trigger {
+  display: contents;
+}
+
+.wm-content {
+  z-index: var(--wm-z, 100);
+  box-sizing: border-box;
+  min-width: var(--wm-min-width, 160px);
+  padding: var(--wm-padding, 4px);
+  border: 1px solid var(--wm-border, #ddd);
+  border-radius: var(--wm-radius, 6px);
+  background: var(--wm-surface, #fff);
+  color: var(--wm-text, #222);
+  box-shadow: var(--wm-shadow, 0 8px 24px rgba(0, 0, 0, 0.15));
+  backdrop-filter: blur(var(--wm-blur, 0px));
+  -webkit-backdrop-filter: blur(var(--wm-blur, 0px));
+  font-size: var(--wm-font-size, 13px);
+  outline: none;
+}
+
+.wm-item,
+.wm-label {
+  display: flex;
+  align-items: center;
+  gap: var(--wm-gap, 8px);
+  padding: var(--wm-item-padding, 4px 8px);
+}
+
+.wm-item {
+  border-radius: var(--wm-item-radius, 4px);
+  cursor: default;
+  user-select: none;
+  outline: none;
+}
+
+.wm-item[data-highlighted] {
+  background: var(--wm-highlight, #f0f0f0);
+}
+
+.wm-item[data-disabled] {
+  opacity: var(--wm-disabled-opacity, 0.5);
+}
+
+.wm-label {
+  color: var(--wm-text-muted, #777);
+  font-size: 0.85em;
+}
+
+.wm-item-label {
+  flex: 1;
+}
+
+/* Check / radio mark; reserved on every row of a menu that has one. */
+.wm-indicator {
+  display: inline-flex;
+  flex: none;
+  justify-content: center;
+  width: 1em;
+}
+
+/* Optional per item: `badge: '#4d7dfb'` sets --wm-badge-color;
+   `badge: { class }` adds a class to style it. */
+.wm-badge {
+  flex: none;
+  width: var(--wm-badge-size, 8px);
+  height: var(--wm-badge-size, 8px);
+  border-radius: 50%;
+  background: var(--wm-badge-color, currentColor);
+}
+
+.wm-shortcut,
+.wm-sub-indicator {
+  color: var(--wm-text-muted, #777);
+}
+
+.wm-shortcut {
+  padding-left: 16px;
+  font-size: 0.9em;
+}
+
+.wm-separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--wm-separator, var(--wm-border, #ddd));
+}

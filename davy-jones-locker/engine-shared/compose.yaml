@@ -1,0 +1,44 @@
+# engine-shared: the services engines share, on the `shared` network, which
+# this project creates and owns. Optional: use it until there's a real one
+# (another Postgres, real Entra, ...), then point the engines' settings there.
+#
+#   cp .env.example .env
+#   docker compose -f davy-jones-locker/engine-shared/compose.yaml up -d --wait     (from the repo root)
+#
+# `tilt up` does this for you (set ENGINE_SHARED=0 to skip it). It runs as its
+# own compose project, so `tilt down` and `docker compose down` at the repo
+# root leave it, and its data, alone.
+#
+# Later here: easyauth-mock (identity), azurite (blob storage), perhaps n8n.
+
+name: engine-shared
+
+services:
+  # Postgres 18. First start creates the engine's database and roles (see
+  # postgres/engine-roles.sql); after that, the volume keeps them.
+  postgres:
+    build: ./postgres
+    image: engine-shared-postgres
+    env_file:
+      - path: .env
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"   # for database tools on this machine only
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    networks:
+      - shared
+    healthcheck:
+      # Over TCP: while it's initialising, Postgres listens only on its socket.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+networks:
+  shared:
+    name: ${SHARED_NETWORK:-shared}
+
+volumes:
+  postgres-data:

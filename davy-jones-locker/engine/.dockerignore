@@ -1,0 +1,6 @@
+.env
+runner.env
+.venv
+__pycache__
+*.pyc
+README.md

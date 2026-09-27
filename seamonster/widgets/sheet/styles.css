@@ -1,0 +1,41 @@
+/* Spreadsheet presentation. Opt in with:
+   import 'seamonster/style.css' (every widget's CSS)
+
+   Every value an app is expected to change is a custom property with an inline
+   fallback, so the defaults apply with nothing declared. Those tokens are the
+   supported styling contract; the `ws-` class names are internal and may change. */
+
+.ws-scroll {
+  overflow-x: auto;
+}
+.ws-sheet {
+  border-collapse: collapse;
+  font-size: var(--ws-font-size, 13px);
+  font-variant-numeric: tabular-nums;
+}
+.ws-sheet th,
+.ws-sheet td {
+  border: 1px solid var(--ws-border, #d4d4d4);
+  padding: var(--ws-cell-padding, 3px 8px);
+  white-space: nowrap;
+}
+.ws-sheet thead th,
+.ws-sheet .ws-row-header {
+  background: var(--ws-header-bg, #f3f3f3);
+  font-weight: 500;
+  color: var(--ws-header-color, #444);
+}
+.ws-sheet .ws-row-header {
+  text-align: center;
+  min-width: var(--ws-row-header-width, 28px);
+}
+.ws-sheet td {
+  min-width: var(--ws-cell-min-width, 80px);
+}
+
+/* A cell carrying a tooltip, so it is discoverable rather than hidden. */
+.ws-sheet td[title] {
+  cursor: help;
+  text-decoration: underline dotted var(--ws-border, #d4d4d4);
+  text-underline-offset: 2px;
+}

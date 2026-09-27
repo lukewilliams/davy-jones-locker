@@ -1,0 +1,8 @@
+# The engine's API. Compile to requirements.txt (pinned, with hashes):
+#   uv pip compile requirements.in --generate-hashes --python-version 3.12 --python-platform linux -o requirements.txt
+fastapi==0.141.1
+uvicorn==0.53.0
+duckdb==1.5.5
+pyarrow==25.0.1
+psycopg[binary]==3.3.6
+httpx==0.28.1

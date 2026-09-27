@@ -1,0 +1,105 @@
+{
+  "name": "seamonster",
+  "version": "0.1.0",
+  "description": "Vue 3 widgets for wrangling data in flowgraphs: a node-graph editor with its panels, plus menus, controls, documents, 3D scenes, sheets and maps.",
+  "license": "Apache-2.0",
+  "author": "Luke Williams",
+  "homepage": "https://github.com/lukewilliams/davy-jones-locker/tree/main/seamonster#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lukewilliams/davy-jones-locker.git",
+    "directory": "seamonster"
+  },
+  "bugs": {
+    "url": "https://github.com/lukewilliams/davy-jones-locker/issues"
+  },
+  "keywords": [
+    "vue",
+    "vue3",
+    "flowgraph",
+    "node-editor",
+    "data-pipeline",
+    "duckdb",
+    "widgets"
+  ],
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": "./dist/index.js",
+    "./menu": "./dist/menu.js",
+    "./controls": "./dist/controls.js",
+    "./doc": "./dist/doc.js",
+    "./scene": "./dist/scene.js",
+    "./sheet": "./dist/sheet.js",
+    "./spatial": "./dist/spatial.js",
+    "./spatial/leaflet": "./dist/spatial/leaflet.js",
+    "./spatial/deck": "./dist/spatial/deck.js",
+    "./style.css": "./dist/style.css"
+  },
+  "scripts": {
+    "build": "vite build"
+  },
+  "peerDependencies": {
+    "@vue-flow/background": "^1.3.2",
+    "@vue-flow/core": "^1.48.2",
+    "reka-ui": "^2.10.4",
+    "vue": "^3.5.0",
+    "@deck.gl/core": "^9.4.0",
+    "@deck.gl/geo-layers": "^9.4.0",
+    "@deck.gl/layers": "^9.4.0",
+    "@tresjs/cientos": "^5.9.0",
+    "@tresjs/core": "^5.9.0",
+    "leaflet": "^1.9.4",
+    "marked": "^18.0.13",
+    "shpjs": "^6.2.0",
+    "three": "^0.186.0"
+  },
+  "peerDependenciesMeta": {
+    "@deck.gl/core": {
+      "optional": true
+    },
+    "@deck.gl/geo-layers": {
+      "optional": true
+    },
+    "@deck.gl/layers": {
+      "optional": true
+    },
+    "@tresjs/cientos": {
+      "optional": true
+    },
+    "@tresjs/core": {
+      "optional": true
+    },
+    "leaflet": {
+      "optional": true
+    },
+    "marked": {
+      "optional": true
+    },
+    "shpjs": {
+      "optional": true
+    },
+    "three": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@deck.gl/core": "^9.4.0",
+    "@deck.gl/geo-layers": "^9.4.0",
+    "@deck.gl/layers": "^9.4.0",
+    "@tresjs/cientos": "^5.9.0",
+    "@tresjs/core": "^5.9.0",
+    "@vitejs/plugin-vue": "^6.0.9",
+    "@vue-flow/background": "^1.3.2",
+    "@vue-flow/core": "^1.48.2",
+    "leaflet": "^1.9.4",
+    "marked": "^18.0.13",
+    "reka-ui": "^2.10.4",
+    "shpjs": "^6.2.0",
+    "three": "^0.186.0",
+    "vite": "^8.3.0",
+    "vue": "^3.5.42"
+  }
+}

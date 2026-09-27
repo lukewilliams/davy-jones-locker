@@ -1,0 +1,80 @@
+# DAVY JONES' LOCKER's engine and its Python sandbox, as an app runs them.
+# Copy this into your app and rename the services for it (engine-<app>, say):
+# browsers reach the engine through the app's own origin at
+# /engines/<service>/, so the name is part of the app's URL.
+#
+#   docker compose -f davy-jones-locker/compose.yaml up -d --build
+#
+# Settings: engine/.env for the engine (copy engine/.env.example), and
+# engine/runner.env for the runner (copy engine/runner.env.example).
+#
+# Networks:
+#   default  the app network: the app reaches the engine here
+#   sandbox  the engine and the runner only, with no way out (internal)
+#   shared   Postgres, from engine-shared (below) or your own
+
+# engine-shared: Postgres (later identity, blob storage, a scheduler), as its
+# own project on the `shared` network. Optional: use your own services instead,
+# or start it with
+#   docker compose -f davy-jones-locker/engine-shared/compose.yaml up -d --wait
+# and uncomment the `shared` lines below.
+
+services:
+  engine:
+    build: ./engine
+    env_file:
+      - path: ./engine/.env
+        required: false
+    environment:
+      RUNNER_URL: http://runner:3000
+      PUBLIC_HOST: engine
+    ports:
+      - "9001:3000"
+    networks:
+      - default
+      - sandbox
+      # - shared
+    depends_on:
+      - runner
+    restart: unless-stopped
+
+  # Runs PythonScript code. It holds no credentials and can reach nothing but
+  # the engine; the container is read-only, unprivileged and capability-free,
+  # with scratch space in memory. One run at a time per container: add
+  # replicas for more.
+  runner:
+    build:
+      context: ./engine
+      dockerfile: runner/Dockerfile
+    # Its own settings file, not .env: nothing with credentials may reach it
+    # (a script could read the server process's environment).
+    env_file:
+      - path: ./engine/runner.env
+        required: false
+    environment:
+      RUN_SCRATCH: /tmp
+      RUN_SWEEP: "1"    # after each run, kill every process it left, even outside its group
+    networks:
+      - sandbox
+    # An init as PID 1 reaps what scripts leave behind: otherwise their exited
+    # processes pile up and use up pids_limit for every later run.
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=1g,mode=1777
+    user: "65534:65534"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 3g
+    cpus: 2
+    restart: unless-stopped
+
+networks:
+  sandbox:
+    internal: true
+  # shared:
+  #   external: true
+  #   name: ${SHARED_NETWORK:-shared}

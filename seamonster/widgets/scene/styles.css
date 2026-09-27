@@ -1,0 +1,15 @@
+/* The canvas fills its container, so the container must have a size.
+   Opt in with: import 'seamonster/style.css' (every widget's CSS) */
+
+.wsc-scene {
+  width: 100%;
+  height: 100%;
+  /* The canvas is an inline element by default, which leaves a baseline gap. */
+  line-height: 0;
+}
+.wsc-scene canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none; /* let OrbitControls handle touch drags */
+}
