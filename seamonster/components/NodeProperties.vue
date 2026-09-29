@@ -1,7 +1,7 @@
 <script setup>
 import { computed, inject, ref, useId, watch } from 'vue'
 import { FLOW_GRAPH } from '../lib/flowGraph.js'
-import { NODE_KINDS, referenceName, runsOnServer } from '../lib/nodeKinds.js'
+import { kindInfo, referenceName, runsOnServer } from '../lib/nodeKinds.js'
 import { OPEN_MENU } from './flowMenus.js'
 import AssistantField from './AssistantField.vue'
 import {
@@ -17,7 +17,7 @@ const props = defineProps({
 })
 
 const graph = inject(FLOW_GRAPH)
-const kind = computed(() => NODE_KINDS[props.node.data.kind])
+const kind = computed(() => kindInfo(props.node.data.kind))
 const status = computed(() => graph.run.status[props.node.id])
 const running = computed(() => status.value === 'running')
 
@@ -175,7 +175,7 @@ const wiredInputs = computed(() => {
   const ids = new Set(graph.flow.edges.value.filter((e) => e.target === props.node.id).map((e) => e.source))
   return [...ids].map((id) => graph.flow.findNode(id)).filter(Boolean).flatMap((source) => {
     const name = referenceName(source.id, source.data)
-    const category = NODE_KINDS[source.data.kind].category
+    const category = kindInfo(source.data.kind).category
     const tables = source.data.ingest && FILE_FORMATS[source.data.ingest.format].multi ? source.data.ingest.tables : []
     return [{ name, category }, ...tables.map((t) => ({ name: `${name}.${t.name}`, category, table: true }))]
   })
@@ -525,6 +525,11 @@ const ids = {
         <p class="flow-field-hint">{{ runHint }}</p>
       </div>
     </template>
+    <p v-else-if="kind.unknown" class="flow-field-note is-warning">
+      This node is a {{ node.data.kind }} node, which this app doesn't have (it was made in another app, or
+      with a plugin this app doesn't install). It can't run or take new wires here, but it keeps its settings
+      and wires, and saving the graph keeps it as it was.
+    </p>
     <p v-else class="flow-field-hint">No editable properties yet for this node kind.</p>
   </div>
 </template>

@@ -2,7 +2,7 @@
 import { computed, inject, useId } from 'vue'
 import { getBezierPath } from '@vue-flow/core'
 import { FLOW_GRAPH } from '../lib/flowGraph.js'
-import { NODE_KINDS } from '../lib/nodeKinds.js'
+import { kindInfo } from '../lib/nodeKinds.js'
 
 // The wire being dragged from a pin. Silver, unless the node at its output end
 // has run: then that node's colour, to the colour of the input it's over (or
@@ -31,7 +31,7 @@ const ends = computed(() => {
   return props.fromInput ? [pointer, pin] : [pin, pointer]
 })
 
-const category = (node) => `flow-node--${NODE_KINDS[node.data.kind].category}`
+const category = (node) => `flow-node--${kindInfo(node.data.kind).category}`
 const stops = computed(() => {
   const [output, input] = props.fromInput ? [props.targetNode, props.sourceNode] : [props.sourceNode, props.targetNode]
   if (!output || graph.run.status[output.id] !== 'completed') {

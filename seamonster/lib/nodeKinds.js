@@ -47,8 +47,18 @@ export const NODE_KIND_DRAG_TYPE = 'application/x-flow-node-kind'
 export const kindsInCategory = (category) =>
   Object.keys(NODE_KINDS).filter((kind) => NODE_KINDS[kind].category === category)
 
+// A kind this app doesn't have: a saved graph can name one (made by another
+// app, or by a plugin this app doesn't install). Its node is kept as a
+// placeholder, greyed, labelled with the kind's name, and never run, with its
+// data and wires as they were, so saving the graph here loses nothing.
+export const isKnownKind = (kind) => Object.hasOwn(NODE_KINDS, kind)
+
+// A kind's entry in NODE_KINDS, or the placeholder's for an unknown kind.
+export const kindInfo = (kind) =>
+  isKnownKind(kind) ? NODE_KINDS[kind] : { label: String(kind), category: 'unknown', unknown: true }
+
 export function pinCounts(kind) {
-  const meta = NODE_KINDS[kind]
+  const meta = kindInfo(kind)
   return { inputs: meta.inputs ?? 1, outputs: meta.outputs ?? 1 }
 }
 
@@ -69,8 +79,9 @@ export function uniqueId(base, usedIds) {
 }
 
 // Whether an ID is still the one the kind generated (<idPrefix><n>), so
-// naming the node may replace it.
-export const isAutoId = (kind, id) => new RegExp(`^${NODE_KINDS[kind].idPrefix}\\d+$`).test(id)
+// naming the node may replace it. Never for an unknown kind's: its prefix
+// isn't known.
+export const isAutoId = (kind, id) => isKnownKind(kind) && new RegExp(`^${NODE_KINDS[kind].idPrefix}\\d+$`).test(id)
 
 // Text as a Python-safe name: lowercase, each run of anything but letters and
 // digits as one _, no _ at either end, and a leading _ before a digit.
@@ -87,7 +98,8 @@ export const referenceName = (id, data) => `${id}_${data.outputSuffix || 'data'}
 // Whether a node runs on the server, sending it the node's input data: a kind
 // that runs only there (PythonScript), or SQL reading tables its inputs don't
 // supply (sqlServerTables, worked out from the query in flowGraph.js).
-export const runsOnServer = (data) => NODE_KINDS[data.kind]?.where === 'server' || !!data.sqlServerTables?.length
+export const runsOnServer = (data) =>
+  isKnownKind(data.kind) && (NODE_KINDS[data.kind].where === 'server' || !!data.sqlServerTables?.length)
 
 // Where pins sit down a node's side, as a top %: evenly spaced, with equal
 // margins above and below (one pin is centred).

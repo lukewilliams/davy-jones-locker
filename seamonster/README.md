@@ -183,8 +183,15 @@ by [graphDocument.js](lib/graphDocument.js):
 }
 ```
 
-Loading drops nodes of unknown kinds (and their wires), so stale or
-hand-edited documents still open. DAVY JONES' LOCKER's app shell supplies
+Loading drops nodes with no ID, kind or position, and wires to nodes that
+aren't there, so stale or hand-edited documents still open. A node of a kind
+this app doesn't have (made in another app, or with a plugin this app doesn't
+install) is kept as a **placeholder**: greyed, labelled with its kind's name,
+saying "Not available here." It has its first pin on each side plus any its
+wires use, and it keeps its settings and wires, so saving the graph here loses
+nothing. It can be moved, renamed or deleted, but not run (running it, or
+anything downstream, fails with a message saying why), and new wires can't be
+drawn to or from it. DAVY JONES' LOCKER's app shell supplies
 one (`createLocalGraphStorage(name)`), which keeps the document in
 localStorage under `<name>:open-graph`.
 

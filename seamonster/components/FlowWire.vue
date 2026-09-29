@@ -4,7 +4,7 @@ import { getBezierPath } from '@vue-flow/core'
 import { vMenu } from '../widgets/menu/index.js'
 import { WIRE_MENU } from './flowMenus.js'
 import { FLOW_GRAPH } from '../lib/flowGraph.js'
-import { NODE_KINDS } from '../lib/nodeKinds.js'
+import { kindInfo } from '../lib/nodeKinds.js'
 
 // A wire between two pins: a bezier curve, drawn here rather than with Vue
 // Flow's BaseEdge so its default edge styles don't apply. Its colour says how
@@ -40,7 +40,10 @@ const state = computed(() => {
   return done(props.target) ? 'flowed' : 'flowing'
 })
 
-const category = (id) => `flow-node--${NODE_KINDS[graph.flow.findNode(id)?.data.kind]?.category}`
+const category = (id) => {
+  const node = graph.flow.findNode(id)
+  return node ? `flow-node--${kindInfo(node.data.kind).category}` : ''
+}
 
 // Gradient IDs are document-wide, so each wire's are unique to it.
 const uid = useId().replace(/[^\w-]/g, '')

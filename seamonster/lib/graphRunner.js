@@ -1,6 +1,6 @@
 import { FILE_FORMATS, formatFromName, withExtension } from './fileFormats.js'
 import { runJavaScript } from './jsSandbox.js'
-import { NODE_KINDS, referenceName, toIdentifier, uniqueId } from './nodeKinds.js'
+import { isKnownKind, kindInfo, referenceName, toIdentifier, uniqueId } from './nodeKinds.js'
 import { repairXlsx, xlsxSheetNames } from './xlsx.js'
 
 // Rows per page of a node's output in the Data panel.
@@ -131,7 +131,7 @@ export function createGraphRunner(sql) {
     const described = []
     for (const id of sourceIds) {
       const source = nodes.get(id)
-      const about = { name: referenceName(id, source), kind: NODE_KINDS[source.kind]?.label ?? source.kind, label: source.label ?? '' }
+      const about = { name: referenceName(id, source), kind: kindInfo(source.kind).label, label: source.label ?? '' }
       const output = outputs.get(id)
       if (!output) {
         described.push({ ...about, error: results[id]?.error ?? "It didn't run." })
@@ -161,7 +161,11 @@ export function createGraphRunner(sql) {
       case 'javascript': return runJs(node, sources, page, context)
       case 'python-script': return runPython(node, sources, page, context)
       default:
-        return { error: `${NODE_KINDS[node.kind].label} nodes can't run yet.` }
+        return {
+          error: isKnownKind(node.kind)
+            ? `${kindInfo(node.kind).label} nodes can't run yet.`
+            : `This app doesn't have ${node.kind} nodes, so this one can't run here. It's kept as it was, and saving the graph keeps it.`,
+        }
     }
   }
 

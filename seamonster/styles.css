@@ -948,6 +948,13 @@ button.flow-panel-title {
 .flow-node--export   { --node-color-from: #f2716b; --node-color-to: #b02020; --node-label-color: #fff; } /* DataExport */
 .flow-node--custom   { --node-color-from: #f5f5f7; --node-color-to: #c7c9cf; --node-label-color: #000; } /* Subnet, custom nodes */
 .flow-node--boundary { --node-color-from: #8b95a5; --node-color-to: #4a5568; --node-label-color: #fff; } /* Begin, Exit */
+.flow-node--unknown  { --node-color-from: #6b7280; --node-color-to: #374151; --node-label-color: #fff; } /* a kind this app doesn't have */
+
+/* A placeholder for a kind this app doesn't have: greyed in every theme. */
+.flow-node--unknown .flow-node-face {
+  filter: grayscale(1);
+  opacity: 0.55;
+}
 
 /* ---- Node (190 x 90, PipelineCanvas.tsx) ---- */
 .flow-node {

@@ -3,7 +3,7 @@ import { computed, inject, ref } from 'vue'
 import { Handle, Position, useNodeConnections } from '@vue-flow/core'
 import { vMenu } from '../widgets/menu/index.js'
 import NodeFace from './NodeFace.vue'
-import { NODE_KINDS, pinCounts, pinOffsets, referenceName, runsOnServer } from '../lib/nodeKinds.js'
+import { kindInfo, pinCounts, pinOffsets, referenceName, runsOnServer } from '../lib/nodeKinds.js'
 import { NODE_MENU } from './flowMenus.js'
 import { FLOW_GRAPH } from '../lib/flowGraph.js'
 
@@ -22,7 +22,7 @@ const props = defineProps({
 })
 
 const graph = inject(FLOW_GRAPH)
-const kind = computed(() => NODE_KINDS[props.data.kind])
+const kind = computed(() => kindInfo(props.data.kind))
 // A node that runs on the server (PythonScript, or SQL reading tables its
 // inputs don't supply) says so while the server is away, and shows a blinking
 // dot while it's there.
@@ -30,26 +30,39 @@ const onServer = computed(() => runsOnServer(props.data))
 const serverState = computed(() => graph.server.value.state)
 
 // None while idle (not run since the graph was opened).
+// A placeholder (a kind this app doesn't have) says so until it has run and failed.
 const statusLabel = computed(() =>
   onServer.value && serverState.value === 'unavailable'
     ? 'Backend not available.'
-    : (STATUS_LABELS[graph.run.status[props.id]] ?? ''),
+    : (STATUS_LABELS[graph.run.status[props.id]] ?? (kind.value.unknown ? 'Not available here.' : '')),
 )
-
-// Every pin on this side, spaced evenly down it.
-const pins = (type) =>
-  computed(() => {
-    const { inputs, outputs } = pinCounts(props.data.kind)
-    return pinOffsets(type === 'target' ? inputs : outputs).map((top, i) => ({ id: `${type}-${i}`, top }))
-  })
-const inputPins = pins('target')
-const outputPins = pins('source')
 
 // Connected pins are drawn filled.
 const connections = useNodeConnections()
 const connectedPins = computed(
   () => new Set(connections.value.map((c) => (c.source === props.id ? c.sourceHandle : c.targetHandle))),
 )
+
+// Every pin on this side, spaced evenly down it. A placeholder's kind doesn't
+// say what pins it has, so it has the first on each side and whichever its
+// wires use, in order, so every wire it was saved with still has its end.
+const pins = (type) =>
+  computed(() => {
+    let ids
+    if (kind.value.unknown) {
+      const wired = connections.value
+        .filter((c) => (type === 'source' ? c.source : c.target) === props.id)
+        .map((c) => (type === 'source' ? c.sourceHandle : c.targetHandle))
+      ids = [...new Set([`${type}-0`, ...wired])].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    } else {
+      const { inputs, outputs } = pinCounts(props.data.kind)
+      ids = Array.from({ length: type === 'target' ? inputs : outputs }, (_, i) => `${type}-${i}`)
+    }
+    const offsets = pinOffsets(ids.length)
+    return ids.map((id, i) => ({ id, top: offsets[i] }))
+  })
+const inputPins = pins('target')
+const outputPins = pins('source')
 
 // Pins show while the node is hovered. Tracked here rather than with CSS :hover,
 // which is unreliable on touch and hybrid devices.
@@ -84,6 +97,7 @@ const hoveredOutput = ref(false)
       :key="pin.id"
       type="target"
       :position="Position.Left"
+      :connectable="!kind.unknown"
       class="flow-handle flow-handle--in"
       :class="{ 'is-connected': connectedPins.has(pin.id) }"
       :style="{ top: pin.top }"
@@ -94,6 +108,7 @@ const hoveredOutput = ref(false)
       :key="pin.id"
       type="source"
       :position="Position.Right"
+      :connectable="!kind.unknown"
       class="flow-handle flow-handle--out"
       :class="{ 'is-connected': connectedPins.has(pin.id) }"
       :style="{ top: pin.top }"

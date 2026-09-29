@@ -8,7 +8,7 @@ import FlowNode from './FlowNode.vue'
 import FlowWire from './FlowWire.vue'
 import FlowConnectionLine from './FlowConnectionLine.vue'
 import { FLOW_GRAPH } from '../lib/flowGraph.js'
-import { NODE_KIND_DRAG_TYPE, NODE_KINDS } from '../lib/nodeKinds.js'
+import { NODE_KIND_DRAG_TYPE, isKnownKind } from '../lib/nodeKinds.js'
 
 // A wire dragged from a pin was dropped on empty canvas, with
 // { point: { x, y } in client coordinates, from: { nodeId, handleId, handleType } }.
@@ -61,7 +61,7 @@ function onDrop(e) {
   } catch {
     return
   }
-  if (!NODE_KINDS[drag?.kind]) return
+  if (!isKnownKind(drag?.kind)) return
   graph.addNode(drag.kind, { x: e.clientX, y: e.clientY }, drag.grab ?? undefined)
 }
 </script>
