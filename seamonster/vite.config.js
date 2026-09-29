@@ -23,6 +23,7 @@ export default defineConfig({
       entry: {
         menu: entry('widgets/menu/index.js'),
         index: entry('index.js'),
+        panels: entry('widgets/panels/index.js'),
         controls: entry('widgets/controls/index.js'),
         doc: entry('widgets/doc/index.js'),
         scene: entry('widgets/scene/index.js'),

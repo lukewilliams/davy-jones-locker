@@ -67,6 +67,29 @@
   inset: 0;
 }
 
+/* ---- Panel host (widgets/panels/PanelHost.vue; FlowgraphEditor is one) ----
+ * The window panels are laid out in. Isolated, so the panels' z-indexes stack
+ * inside it: under popovers portalled to <body>, over the content. */
+.flow-panel-host {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.flow-panel-host:focus,
+.flow-panel-host:focus-visible {
+  outline: none;
+}
+
+/* The content under the panels (a canvas, a map, a scene). Its own stacking
+ * context, so however high its layers go (Leaflet's run to 1000), they stay
+ * under the panels. */
+.flow-panel-host-content {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
 /* ---- Title + breadcrumb ---- */
 .flow-title-bar {
   position: absolute;
@@ -174,6 +197,12 @@
   position: absolute;
   z-index: 5;
   overflow: hidden;
+  /* The window's text, set here too so panels over any host's content match. */
+  color: var(--flow-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.15) transparent;
   border: 1px solid var(--flow-panel-border);
   border-radius: var(--flow-panel-radius);
   background-color: var(--flow-panel);
@@ -217,7 +246,8 @@ button.flow-panel-title {
 /* ---- Panel rails ----
  * A panel's title as a button in the gap on its docked edge, shown while the
  * panel is collapsed. On an edge shared by several panels, once any of them is
- * unlinked, the open ones show too (.is-open), since they can cover each other.
+ * unlinked, the open ones show too (.is-open), since they can cover each other;
+ * with FlowgraphEditor's autoHideRails off, they always do.
  * Rails on one edge stack around that edge's centre. Each has the
  * panel's frosted look and a tighter radius, bordered on every side but the
  * window edge. */
@@ -242,6 +272,12 @@ button.flow-panel-title {
   bottom: 0;
   left: 50%;
   transform: translateX(-50%);
+}
+
+/* Content panels' rails, at the start of the edge where those panels are
+ * anchored (top or left set inline, from the layout). */
+.flow-rail-group--start {
+  transform: none;
 }
 
 .flow-panel-rail {
@@ -359,6 +395,22 @@ button.flow-panel-title {
   bottom: 6px;
   left: 6px;
   overflow: hidden;
+}
+
+/* Content panels: the content lays out at its natural size (a side panel's at
+ * the body's width, a bottom panel's as wide as it needs) and is measured; the
+ * panel is sized to it, and once the window caps it the body scrolls, either
+ * way. */
+.flow-panel--content .flow-panel-body {
+  overflow: auto;
+}
+
+.flow-panel-content {
+  display: flow-root;
+}
+
+.flow-panel--dock-bottom .flow-panel-content {
+  width: max-content;
 }
 
 /* ---- Panel contents ---- */
@@ -788,25 +840,25 @@ button.flow-panel-title {
   overflow-wrap: anywhere;
 }
 
-/* The Console panel: one message, or an error. */
-.flow-console {
+/* The Terminal panel: one message, or an error. */
+.flow-terminal {
   box-sizing: border-box;
   height: 100%;
   overflow: auto;
 }
 
-.flow-console-line {
+.flow-terminal-line {
   margin: 0;
   padding: 0.25rem 0.375rem;
   font-size: 12px;
 }
 
-.flow-console-note {
+.flow-terminal-note {
   color: var(--flow-text-muted);
 }
 
 /* What a script printed. */
-.flow-console-output {
+.flow-terminal-output {
   margin: 0;
   padding: 0.25rem 0.375rem;
   font-family: var(--font-mono);
@@ -816,7 +868,7 @@ button.flow-panel-title {
   color: var(--flow-text);
 }
 
-.flow-console-error {
+.flow-terminal-error {
   margin: 0;
   padding: 0.25rem 0.375rem;
   font-family: var(--font-mono);

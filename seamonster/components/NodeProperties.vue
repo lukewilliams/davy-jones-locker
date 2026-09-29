@@ -226,8 +226,8 @@ const canRun = computed(
 )
 const runHint = computed(() =>
   props.node.data.kind === 'data-export'
-    ? "Writes whatever's wired into this node on Run. Downloads to your computer immediately; errors show in the Console panel."
-    : 'Results land in the Data panel; errors show in the Console panel.',
+    ? "Writes whatever's wired into this node on Run. Downloads to your computer immediately; errors show in the Terminal panel."
+    : 'Results land in the Data panel; errors show in the Terminal panel.',
 )
 
 // Enter commits a field by leaving it for the flow window (not the page, which
@@ -327,7 +327,7 @@ const ids = {
       <p class="flow-field-hint">
         Each node wired in is a pandas DataFrame named by its output, like <code>sqlnode1_data</code> (several
         tables: <code>dataingest1_data.sheet1</code>). The last line's value is this node's output: a DataFrame
-        as its table, anything else shown as a value. <code>print</code> shows in the Console; <code>sleep(seconds)</code>
+        as its table, anything else shown as a value. <code>print</code> shows in the Terminal; <code>sleep(seconds)</code>
         waits. Ctrl+Enter runs.
       </p>
     </div>

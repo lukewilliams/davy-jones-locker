@@ -42,7 +42,7 @@ const turnPage = (delta) => graph.runNode(node.value.id, data.value.page + delta
       }}</pre>
     </div>
     <p v-else-if="!result.data && !result.tables" class="flow-panel-empty">
-      This node's output isn't tabular — see the Console panel.
+      This node's output isn't tabular — see the Terminal panel.
     </p>
     <div v-else class="flow-data-tabs">
       <div v-if="result.tables" class="flow-tabs" role="tablist">

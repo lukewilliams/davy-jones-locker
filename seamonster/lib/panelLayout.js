@@ -1,26 +1,27 @@
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, toValue, watch } from 'vue'
 import { isTyping } from './keyboard.js'
 
 export const PANEL_LAYOUT = Symbol('flow-panel-layout')
 
-const STORAGE_KEY = 'seamonster:unlinked-panel-rects'
+// Where unlinked rects are saved unless a host names its own key.
+const DEFAULT_STORAGE_KEY = 'seamonster:unlinked-panel-rects'
 const DOCKS = ['left', 'right', 'bottom']
 const Z_BASE = 5
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
 
-function loadRects() {
+function loadRects(key) {
   try {
-    const rects = JSON.parse(localStorage.getItem(STORAGE_KEY))
+    const rects = JSON.parse(localStorage.getItem(key))
     return rects && typeof rects === 'object' ? rects : {}
   } catch {
     return {}
   }
 }
 
-function saveRects(rects) {
+function saveRects(key, rects) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(rects))
+    localStorage.setItem(key, JSON.stringify(rects))
   } catch {
     // Storage unavailable (private window, blocked): sizes just don't persist.
   }
@@ -31,7 +32,8 @@ function validRect(r) {
 }
 
 /*
- * Layout state for the panels docked around one flow window.
+ * Layout state for the panels docked around one window: FlowgraphEditor's, or
+ * any PanelHost's.
  *
  * Linked panels share the window: left panels sit side by side from the left
  * edge (below the title bar), right panels full height on the right, and the
@@ -47,30 +49,47 @@ function validRect(r) {
  * whenever the panel is unlinked again. Linked sizes are fractions too, so both
  * scale with the window, down to each panel's minimum size. If the window gets
  * too narrow for the linked panels at those minimums, they are unlinked.
+ *
+ * Content panels (`sizing: 'content'`) stay out of all that: linked, they're
+ * anchored at the start of their edge (the top of a side, the left of the
+ * bottom) and overlay whatever is there. A side panel's width is its size on
+ * the linked axis, and its height follows its content; a bottom panel's width
+ * and height both follow its content. Either is capped to the window, and its
+ * body scrolls beyond that. Unlinked, they behave like any other panel.
+ *
+ * Options:
+ * - `storageKey`: the localStorage key for unlinked rects. Every layout using
+ *   one key shares them, by panel name, so a host should name its own
+ *   (`'<app>:<host>'`). The default is the editor's.
+ * - `autoHideRails` (a boolean, ref or getter; default true): open panels leave
+ *   the rails, except as `rails` below says. False keeps every panel's rail.
  */
-export function createPanelLayout() {
+export function createPanelLayout({ storageKey = DEFAULT_STORAGE_KEY, autoHideRails = true } = {}) {
   // Window size, the gap to the window edge, and where linked left panels start, in px.
   const frame = reactive({ width: 0, height: 0, gap: 0, leftTop: 0 })
   // Registration order: linked left panels sit side by side in this order.
   const panels = reactive([])
   const stack = ref([]) // panel names, back to front
   const active = ref(null)
-  const saved = loadRects()
+  const saved = loadRects(storageKey)
   const hiddenByMaximise = ref(null) // panels to restore after maximising the canvas
 
   const inner = () => ({ w: frame.width - 2 * frame.gap, h: frame.height - 2 * frame.gap })
   const find = (name) => panels.find((p) => p.name === name)
+  const isContent = (p) => p.sizing === 'content'
   // Panels taking part in the linked layout. `include` counts one more panel as
   // linked and open, to work out where it would sit if it were.
   const inLinkedLayout = (p, include) => p.name === include || (p.linked && !p.collapsed)
+  // Linked, open fill panels on one edge: the ones that pack against each other.
   const linkedOpen = (dock, include = null) =>
-    panels.filter((p) => p.dock === dock && inLinkedLayout(p, include))
+    panels.filter((p) => p.dock === dock && !isContent(p) && inLinkedLayout(p, include))
 
-  function register({ name, title, dock, defaultSize, minWidth, minHeight, collapsed, hotkey, aboveBottom }) {
+  function register({ name, title, dock, sizing = 'fill', defaultSize, minWidth, minHeight, collapsed, hotkey, aboveBottom }) {
     panels.push({
-      name, title, dock, defaultSize, minWidth, minHeight, collapsed, hotkey, aboveBottom,
+      name, title, dock, sizing, defaultSize, minWidth, minHeight, collapsed, hotkey, aboveBottom,
       linked: true,
       linkedFrac: null, // null until resized: defaultSize applies
+      contentSize: null, // content panels: their natural outer size in px, once measured
       unlinkedRect: validRect(saved[name]),
     })
     stack.value.push(name)
@@ -84,6 +103,15 @@ export function createPanelLayout() {
 
   function setFrame(next) {
     Object.assign(frame, next)
+  }
+
+  // A content panel's natural outer size (its content plus the panel's own
+  // title, padding and any scrollbars), measured by FlowPanel.
+  function setContentSize(name, size) {
+    const p = find(name)
+    const old = p?.contentSize
+    if (!p || (old && Math.abs(old.width - size.width) < 0.5 && Math.abs(old.height - size.height) < 0.5)) return
+    p.contentSize = size
   }
 
   // Size along the axis a linked panel resizes on: width for side panels, height for bottom.
@@ -135,6 +163,24 @@ export function createPanelLayout() {
     }
   }
 
+  // A linked content panel's rect: anchored at the start of its edge, at its
+  // content size (side panels: their linked width), within the window.
+  function contentRect(p) {
+    const { width: W, height: H, gap: g, leftTop } = frame
+    const { w, h } = inner()
+    const natural = p.contentSize ?? { width: p.minWidth, height: p.minHeight }
+    if (p.dock === 'bottom') {
+      const width = clamp(natural.width, Math.min(p.minWidth, w), w)
+      const height = clamp(natural.height, 0, h)
+      return { left: g, top: H - g - height, width, height }
+    }
+    const width = linkedSize(p)
+    if (p.dock === 'left') {
+      return { left: g, top: leftTop, width, height: clamp(natural.height, 0, Math.max(0, H - g - leftTop)) }
+    }
+    return { left: W - g - width, top: g, width, height: clamp(natural.height, 0, h) }
+  }
+
   // px rects of every open panel, keyed by name (plus `include`, placed as if linked and open).
   function layoutRects(include = null) {
     const out = {}
@@ -168,6 +214,10 @@ export function createPanelLayout() {
     for (const p of bottoms) {
       const height = bottomHeight(p, above)
       out[p.name] = { left: bottomLeft, top: H - g - height, width: Math.max(0, right - bottomLeft), height }
+    }
+
+    for (const p of panels) {
+      if (isContent(p) && inLinkedLayout(p, include)) out[p.name] = contentRect(p)
     }
 
     for (const p of panels) {
@@ -230,6 +280,14 @@ export function createPanelLayout() {
     const g = frame.gap
 
     if (p.linked) {
+      // A content panel overlays the rest: only a side one's width resizes,
+      // up to the window's.
+      if (isContent(p)) {
+        if (p.dock === 'bottom') return
+        const grow = p.dock === 'right' ? -dx : dx
+        p.linkedFrac = clamp(start.width + grow, p.minWidth, aw) / aw
+        return
+      }
       if (p.dock === 'bottom') {
         const max = Math.max(p.minHeight, bottomMax(leftColumns().above))
         p.linkedFrac = clamp(start.height - dy, p.minHeight, max) / ah
@@ -273,7 +331,7 @@ export function createPanelLayout() {
 
   function persist(p) {
     saved[p.name] = p.unlinkedRect
-    saveRects(saved)
+    saveRects(storageKey, saved)
   }
 
   // End of a resize or move: an unlinked rect is remembered for next time.
@@ -323,14 +381,22 @@ export function createPanelLayout() {
     if (!collapsed) activate(name)
   }
 
+  // Whether an open panel overlaps any other, so one may hide the other.
+  function overlapsAnother(name) {
+    const all = rects.value
+    return !!all[name] && Object.keys(all).some((n) => n !== name && overlaps(all[name], all[n]))
+  }
+
   // Rails show collapsed panels. On an edge shared by several panels, once any
-  // of them is unlinked they can cover each other, so all of them show.
+  // of them is unlinked they can cover each other, so all of them show. Content
+  // panels float over everything, so each shows while it overlaps another. With
+  // autoHideRails off, every panel always shows.
   const rails = computed(() =>
     Object.fromEntries(
       DOCKS.map((dock) => {
         const docked = panels.filter((p) => p.dock === dock)
-        const showAll = docked.length > 1 && docked.some((p) => !p.linked)
-        return [dock, docked.filter((p) => p.collapsed || showAll)]
+        const showAll = !toValue(autoHideRails) || (docked.length > 1 && docked.some((p) => !p.linked))
+        return [dock, docked.filter((p) => p.collapsed || showAll || (isContent(p) && overlapsAnother(p.name)))]
       }),
     ),
   )
@@ -364,8 +430,9 @@ export function createPanelLayout() {
   }
 
   // Ctrl+Space: link/unlink the active panel, or with none active, maximise/restore.
-  // A panel's hotkey on its own (no Ctrl, Cmd or Alt; not while typing) toggles it.
-  function onKeydown(e) {
+  // A panel's hotkey on its own (no Ctrl, Cmd or Alt; not while typing) toggles
+  // it, unless `hotkeys` is false.
+  function onKeydown(e, { hotkeys = true } = {}) {
     if (e.ctrlKey && e.code === 'Space') {
       e.preventDefault()
       if (e.repeat) return
@@ -373,7 +440,7 @@ export function createPanelLayout() {
       else toggleMaximise()
       return
     }
-    if (e.ctrlKey || e.metaKey || e.altKey || isTyping(e)) return
+    if (!hotkeys || e.ctrlKey || e.metaKey || e.altKey || isTyping(e)) return
     const panel = panels.find((p) => p.hotkey?.toLowerCase() === e.key.toLowerCase())
     if (!panel) return
     e.preventDefault()
@@ -381,8 +448,8 @@ export function createPanelLayout() {
   }
 
   return {
-    panels, rects, rails, active, maximiseAction,
-    find, register, unregister, setFrame,
+    frame, panels, rects, rails, active, maximiseAction,
+    find, register, unregister, setFrame, setContentSize,
     resize, move, commitRect, resetUnlinkedRect, toggleLinked,
     isCovered, zIndex, activate, deactivate, setCollapsed, toggle,
     toggleMaximise, onKeydown,

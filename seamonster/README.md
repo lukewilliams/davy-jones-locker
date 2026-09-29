@@ -1,6 +1,6 @@
 # SEAMONSTER
 
-> **Early release.** This is 0.1: the API may change between minor versions
+> **Early release.** This is 0.2: the API may change between minor versions
 > until 1.0, so pin an exact version if you depend on it.
 
 Vue 3 widgets for wrangling data in flowgraphs. The main one is the
@@ -10,7 +10,8 @@ its own entry:
 
 | Import | What |
 |---|---|
-| `seamonster` | the flowgraph editor: `FlowgraphEditor`, `FlowPanel`, `defineTheme` |
+| `seamonster` | the flowgraph editor: `FlowgraphEditor`, `defineTheme`, and everything in `/panels` |
+| `seamonster/panels` | the editor's docked panels over any content: `PanelHost`, `FlowPanel` ([widgets/panels](widgets/panels/README.md)); no Vue Flow needed |
 | `seamonster/menu` | declarative, context-sensitive context menus ([widgets/menu](widgets/menu/README.md)) |
 | `seamonster/controls` | control panels: selects and checkbox groups ([widgets/controls](widgets/controls/README.md)) |
 | `seamonster/doc` | markdown documents ([widgets/doc](widgets/doc/README.md)) |
@@ -47,8 +48,9 @@ npm run build    # dist/: an ES module per entry, and style.css
 index.js                the editor's entry (seamonster)
 styles.css              the editor's tokens (--flow-*) and rules
 widgets/                what a host uses whole
-  FlowgraphEditor.vue        the editor: canvas, title, panels, rails, menus
-  ConsolePanel.vue      left panels, in this order (C): the selected node's error or summary
+  FlowgraphEditor.vue   the editor: a PanelHost with the canvas, title, panels and menus
+  panels/               PanelHost: panels, rails and their keys over any content (seamonster/panels)
+  TerminalPanel.vue     left panels, in this order (T): the selected node's error or summary
   LibraryPanel.vue        (L): node cards to drag onto the canvas
   FlowgraphsPanel.vue     (G): Execute Graph
   DataPanel.vue         bottom panel (D): the selected node's output (a tab per table)
@@ -62,11 +64,12 @@ components/             what the editor is built from
   FlowConnectionLine.vue  the wire being dragged from a pin
   FlowPanel.vue         the base panel every panel type wraps
   FlowPanelRails.vue    collapsed / side titles on each window edge
+  panelMenus.js         the panels' menu definitions and commands
   DataTable.vue         one page of a table, and its pager
   NodeProperties.vue    Manage's fields: ID, Name, each kind's own, Run
   AssistantField.vue    Manage's AI assistant, above a node's SQL or code
   ServerStatus.vue      bottom left: the server connected (green) or not (blue)
-  flowMenus.js          context menu definitions and their commands
+  flowMenus.js          the graph's context menus and their commands
 lib/
   flowGraph.js          the graph: nodes, wires, edits, runs, stored files (one per window)
   graphDocument.js      the graph as a saved document, and back
@@ -93,6 +96,7 @@ positioned against the window, not the canvas, so they stay put while it pans.
 | `storage` | none | keeping the open graph and ingested data (see Keeping the open graph) |
 | `sql` | none | the engine nodes run on (see Running nodes) |
 | `server` | none | the server engine (see Running nodes) |
+| `autoHideRails` | `true` | open panels leave the rails, as long as nothing on their edge can cover them; `false` keeps a rail for every panel (see Panels) |
 
 ## Themes
 
@@ -114,7 +118,7 @@ defineTheme({
 
 `<FlowgraphEditor theme="EMBER" />` then uses it. A theme can be based on
 another app theme; names are matched in any case, and a built-in's name can't
-be reused. `themeNames()` lists them all (the console's `f.Theme` will).
+be reused. `themeNames()` lists them all (the Terminal's `f.Theme` will).
 
 ## Canvas
 
@@ -260,7 +264,7 @@ SQL:
   per table). The last line, if it's an expression, is the node's value: a
   DataFrame (or Series, or Arrow table) becomes its table; anything else is
   shown in the Data panel (pretty-printed JSON, or its `repr`), and the node
-  has no rows. `print()` output goes to Console, as does the traceback, with
+  has no rows. `print()` output goes to Terminal, as does the traceback, with
   the script's own lines only. Ctrl+Enter in the editor saves and runs.
 - **DataIngest** reads its file when it's chosen, not when it runs: CSV, TSV,
   JSON, GeoJSON (a column per property, geometry as GeoJSON text), Parquet,
@@ -288,7 +292,7 @@ SQL:
   function body; each node wired in is a variable named by its reference name
   (an array of row objects, or an object of them for several tables). Returning
   an array of rows makes its table; `console.log` / `print` lines are its
-  output (Console); `await sleep(s)` waits. It never runs on the server
+  output (Terminal); `await sleep(s)` waits. It never runs on the server
   (`where: 'browser'`) until the engine has safeguards for user code.
 - Other kinds fail with "… nodes can't run yet.", and anything downstream of a
   failure fails too.
@@ -334,19 +338,22 @@ A panel component is a thin wrapper around `FlowPanel`:
 ```
 
 Props: `name` (unique id), `title`, `dock` (`left` | `right` | `bottom`),
-`defaultSize` (px along the linked axis), `minWidth` (200), `minHeight` (140),
-`collapsed` (initial), `hotkey` (a single key), `aboveBottom` (see below).
-Panels register with the layout that `FlowgraphEditor` creates and provides. Left
-panels sit side by side in the order they appear in FlowgraphEditor's template.
-`FlowPanel` is exported so a host's own panels can match the built-in ones,
-and `FLOW_GRAPH` and `PANEL_LAYOUT` (the stores FlowgraphEditor provides) so they
-can follow the selection. Letting a host add, move or replace panels is still
-to come.
+`sizing` (`fill` | `content`, below), `defaultSize` (px along the linked
+axis), `minWidth` (200), `minHeight` (140), `collapsed` (initial), `hotkey`
+(a single key), `aboveBottom` (see below). Panels register with the layout
+of the `PanelHost` around them: `FlowgraphEditor` is a PanelHost, and any app
+can use one to put the same panels over its own content (a map, a scene),
+from `seamonster/panels` ([widgets/panels](widgets/panels/README.md)). Left
+panels sit side by side in the order they appear in the host's template.
+`FLOW_GRAPH` and `PANEL_LAYOUT` (the stores FlowgraphEditor provides) are
+exported so a host's own panels can follow the selection. Letting a host add,
+move or replace the editor's own panels is still to come (roadmap S4).
 
-The panels are Console, Library and Flowgraphs on the left, Data at the
-bottom and Manage on the right. All but Manage start collapsed. Console, Data
-and Flowgraphs are empty for now. Flowgraphs is `aboveBottom`: it sits above
-Data, which runs underneath it.
+The panels are Terminal, Library and Flowgraphs on the left, Data at the
+bottom and Manage on the right. All but Manage start collapsed. Flowgraphs is
+`aboveBottom`: it sits above Data, which runs underneath it. (Terminal was
+called Console in 0.1; it was renamed so it isn't mistaken for the
+browser's DevTools console, and its hotkey moved from C to T.)
 
 The behaviour lives in [panelLayout.js](lib/panelLayout.js):
 
@@ -370,8 +377,9 @@ The behaviour lives in [panelLayout.js](lib/panelLayout.js):
 - **Rails** (side titles in the window-edge gap) show collapsed panels. On an
   edge with several panels, once any of them is unlinked, the open ones show a
   rail too, so a covered panel can still be reached. A rail click behaves like
-  a title click.
-- **Hotkeys:** a panel's own key (C, L, G, D, M) acts like a rail click:
+  a title click. With `autoHideRails` off (a FlowgraphEditor prop), every
+  panel keeps its rail, open or collapsed.
+- **Hotkeys:** a panel's own key (T, L, G, D, M) acts like a rail click:
   opens it, brings it to the front if it's covered, or else collapses it.
   Ignored with Ctrl, Cmd or Alt held, or while typing in a field.
 - **Ctrl+Space** with no panel active (after clicking the canvas) collapses all
@@ -379,11 +387,19 @@ The behaviour lives in [panelLayout.js](lib/panelLayout.js):
   needs focus for any of these keys, so click inside it first.
 - **"Set unlinked size to current"** (`resetUnlinkedRect`) saves the panel's
   linked position as its unlinked one, without unlinking it.
+- **Content panels** (`sizing="content"`), for panels floating over a host's
+  content rather than sharing the window: linked, a side panel sits at the
+  top of its edge, `defaultSize` wide (resizable), as tall as its content; a
+  bottom panel sits at the left, as wide and tall as its content. They
+  overlay everything else and don't push other panels. Once the window caps
+  one, its body scrolls, across as well as down. Each shows its rail (at the
+  start of its edge) while it overlaps another panel. Unlinked, they're like
+  any other panel, minimum sizes included.
 
 ## Context menus
 
-Menus use [the menu widget](widgets/menu/README.md). `FlowgraphEditor` renders
-its root through `MenuHost`, and regions opt in with `v-menu`:
+Menus use [the menu widget](widgets/menu/README.md). `PanelHost` renders
+the editor's root through `MenuHost`, and regions opt in with `v-menu`:
 
 - Panel titles and rails: `PANEL_MENU`, with the panel's name as context.
 - Canvas: Nodes (categories with colour badges, then node types) and Panels.
@@ -391,22 +407,24 @@ its root through `MenuHost`, and regions opt in with `v-menu`:
 - A wire dropped on empty canvas: `CONNECTION_MENU`, opened from code with
   `MenuHost`'s `open()`.
 
-Menus are defined as data in [flowMenus.js](components/flowMenus.js), with
-the commands that act on the layout and the graph. Right-clicking outside a
-region shows no menu, not even the browser's.
+Menus are defined as data: the panels' in [panelMenus.js](components/panelMenus.js)
+(`PANEL_MENU`, `panelCommands(layout)`, `panelsSubmenu(layout)`), the graph's
+in [flowMenus.js](components/flowMenus.js). PanelHost adds the panel
+commands, and the editor its own on top. Right-clicking outside a region
+shows no menu, not even the browser's.
 
-The editor's menu look is in a `<style>` block in [FlowgraphEditor.vue](widgets/FlowgraphEditor.vue).
-It sets the `--wm-*` tokens on `.flow-editor`, plus the part-class overrides:
-the category-coloured badges, and the panning gradient on highlighted items
-(category colours for items under a badged category, blue-green otherwise).
-Menus are portalled into `.flow-editor`, so this styling reaches only the editor's
-menus.
+The menu look is in a `<style>` block in [PanelHost.vue](widgets/panels/PanelHost.vue).
+It sets the `--wm-*` tokens on `.flow-surface` (every PanelHost, so the
+editor too), plus the part-class overrides: the category-coloured badges, and
+the panning gradient on highlighted items (category colours for items under a
+badged category, blue-green otherwise). Menus are portalled into their host,
+so this styling reaches only its menus.
 
 ## Styling
 
 - **`styles.css`**: the editor's tokens (`--flow-*`) and every one of its rules.
   Layout comes entirely from CSS, and components carry no styles of their own
-  except the menu block in FlowgraphEditor.vue.
+  except the menu block in PanelHost.vue.
 - A host app sizes FlowgraphEditor's container itself.
 - `--flow-panel-radius` is both the panel corner radius and the gap between a
   docked panel and the window edge; the rails sit in that gap.
@@ -431,11 +449,11 @@ menus.
   into named tokens so they can be adjusted in one place. Nodes and the menu
   highlight both use them.
 
-## Planned: console commands
+## Planned: terminal commands
 
-Step 8f, after the split: a command field at the bottom of the Console panel
-(~ focuses it). `f.` commands run in the browser (`f.Theme = "FLOW"`,
+Step 8f: a command field at the bottom of the Terminal panel (~ focuses it).
+`f.` commands run in the browser (`f.Theme = "FLOW"`,
 `f.Security.DisconnectBackend`), `b.` commands on the engine
-(`b.LiteLLMKey = "…"`), with completion and namespaces. The Console's logs
+(`b.LiteLLMKey = "…"`), with completion and namespaces. The Terminal's logs
 also change: they append, and clear when a node's state changes. The design
 is in the roadmap (step 8f).

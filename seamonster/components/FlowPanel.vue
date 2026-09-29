@@ -1,12 +1,12 @@
 <script setup>
-import { computed, inject, onBeforeUnmount } from 'vue'
+import { computed, inject, onBeforeUnmount, ref, watch } from 'vue'
 import { vMenu } from '../widgets/menu/index.js'
 import { PANEL_LAYOUT } from '../lib/panelLayout.js'
-import { PANEL_MENU } from './flowMenus.js'
+import { PANEL_MENU } from './panelMenus.js'
 
-// A panel docked to one edge of the flow window. Position, size, linking and
-// stacking are owned by the window's panel layout (see panelLayout.js); the
-// panel's collapsed title is drawn by FlowPanelRails.
+// A panel docked to one edge of its window (FlowgraphEditor, or any PanelHost).
+// Position, size, linking and stacking are owned by the window's panel layout
+// (see panelLayout.js); the panel's collapsed title is drawn by FlowPanelRails.
 const props = defineProps({
   name: { type: String, required: true },
   title: { type: String, required: true },
@@ -15,7 +15,17 @@ const props = defineProps({
     required: true,
     validator: (v) => ['left', 'right', 'bottom'].includes(v),
   },
-  // Initial size along the axis a linked panel resizes on: width for side panels, height for bottom.
+  // 'fill': linked, it packs against the other linked panels and fills its
+  // edge. 'content': linked, it's anchored at the start of its edge (top, or
+  // left for the bottom) and sized to its content, over whatever is there; its
+  // body scrolls once the window caps it. See panelLayout.js.
+  sizing: {
+    type: String,
+    default: 'fill',
+    validator: (v) => ['fill', 'content'].includes(v),
+  },
+  // Initial size along the axis a linked panel resizes on: width for side
+  // panels, height for bottom (a content panel's height follows its content).
   defaultSize: { type: Number, default: 320 },
   minWidth: { type: Number, default: 200 },
   minHeight: { type: Number, default: 140 },
@@ -35,11 +45,53 @@ onBeforeUnmount(() => layout.unregister(props.name))
 const panel = computed(() => layout.find(props.name))
 const rect = computed(() => layout.rects.value[props.name])
 
+// A title can change (a host's data may name its panels): the rail and the
+// Panels menu follow it.
+watch(
+  () => props.title,
+  (title) => (panel.value.title = title),
+)
+
 // Linked panels resize on one axis, from the edge facing the canvas. Unlinked
 // panels resize from every edge and corner.
+// A linked content panel on the bottom has none: its content sets both sizes.
 const LINKED_EDGES = { left: ['e'], right: ['w'], bottom: ['n'] }
 const UNLINKED_EDGES = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']
-const edges = computed(() => (panel.value.linked ? LINKED_EDGES[props.dock] : UNLINKED_EDGES))
+const content = props.sizing === 'content'
+const edges = computed(() => {
+  if (!panel.value.linked) return UNLINKED_EDGES
+  return content && props.dock === 'bottom' ? [] : LINKED_EDGES[props.dock]
+})
+
+// Content panels report their natural outer size: the content's, plus the
+// panel's title, padding and any scrollbars (the panel less its body's client
+// area). Measured again whenever the content or the body changes size.
+const panelEl = ref(null)
+const bodyEl = ref(null)
+const contentEl = ref(null)
+
+function measure() {
+  const [el, body, inner] = [panelEl.value, bodyEl.value, contentEl.value]
+  if (!el || !body || !inner) return
+  layout.setContentSize(props.name, {
+    width: inner.offsetWidth + el.offsetWidth - body.clientWidth,
+    height: inner.offsetHeight + el.offsetHeight - body.clientHeight,
+  })
+}
+
+if (content) {
+  watch(
+    [contentEl, bodyEl],
+    ([inner, body], _, onCleanup) => {
+      if (!inner || !body) return
+      const observer = new ResizeObserver(measure)
+      observer.observe(inner)
+      observer.observe(body)
+      onCleanup(() => observer.disconnect())
+    },
+    { flush: 'post' },
+  )
+}
 
 const panelStyle = computed(() => ({
   left: `${rect.value.left}px`,
@@ -120,9 +172,11 @@ function onResizeEnd() {
 <template>
   <section
     v-if="!panel.collapsed && rect"
+    ref="panelEl"
     :class="[
       'flow-panel',
       `flow-panel--dock-${dock}`,
+      `flow-panel--${sizing}`,
       { 'is-active': layout.active.value === name, 'is-unlinked': !panel.linked },
     ]"
     :style="panelStyle"
@@ -142,8 +196,12 @@ function onResizeEnd() {
       {{ title }}
     </button>
 
-    <div class="flow-panel-body">
-      <slot />
+    <div ref="bodyEl" class="flow-panel-body">
+      <!-- A content panel's content lays out at its natural size, to be measured. -->
+      <div v-if="content" ref="contentEl" class="flow-panel-content">
+        <slot />
+      </div>
+      <slot v-else />
     </div>
 
     <div

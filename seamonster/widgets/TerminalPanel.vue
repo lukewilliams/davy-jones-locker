@@ -15,29 +15,29 @@ const tables = (list) => list.map((t) => `${t.label} (${rows(t.data.rowCount)})`
 </script>
 
 <template>
-  <FlowPanel class="console-panel" name="console" title="Console" dock="left" hotkey="C" :default-size="280" collapsed>
-    <div class="flow-console">
+  <FlowPanel class="terminal-panel" name="terminal" title="Terminal" dock="left" hotkey="T" :default-size="280" collapsed>
+    <div class="flow-terminal">
       <p v-if="!result" class="flow-panel-empty">
         Nothing to show yet — run a node to see its output or errors here.
       </p>
       <template v-else>
-        <p v-if="stale" class="flow-console-line flow-console-note">
+        <p v-if="stale" class="flow-terminal-line flow-terminal-note">
           This node has changed since it ran (or something upstream has). Run it again to update this.
         </p>
         <!-- What a script printed, then how it ended. -->
-        <pre v-if="result.output" class="flow-console-output">{{ result.output }}</pre>
-        <pre v-if="result.error" class="flow-console-error">{{ result.error }}</pre>
-        <p v-else-if="result.export" class="flow-console-line">
+        <pre v-if="result.output" class="flow-terminal-output">{{ result.output }}</pre>
+        <pre v-if="result.error" class="flow-terminal-error">{{ result.error }}</pre>
+        <p v-else-if="result.export" class="flow-terminal-line">
           Wrote “{{ result.export.filename }}” ({{ result.export.contentType }}, {{ formatSize(result.export.size) }}).
         </p>
-        <p v-else-if="result.tables" class="flow-console-line">
+        <p v-else-if="result.tables" class="flow-terminal-line">
           Read {{ result.tables.length }} {{ result.tables.length === 1 ? 'table' : 'tables' }}: {{ tables(result.tables) }}.
         </p>
-        <p v-else-if="result.data" class="flow-console-line">Returned {{ rows(result.data.rowCount) }}.</p>
-        <p v-else-if="result.value && result.value.kind !== 'none'" class="flow-console-line">
+        <p v-else-if="result.data" class="flow-terminal-line">Returned {{ rows(result.data.rowCount) }}.</p>
+        <p v-else-if="result.value && result.value.kind !== 'none'" class="flow-terminal-line">
           Returned a {{ result.value.type }} (see the Data panel).
         </p>
-        <p v-else-if="!result.output" class="flow-console-line flow-console-note">(no output)</p>
+        <p v-else-if="!result.output" class="flow-terminal-line flow-terminal-note">(no output)</p>
       </template>
     </div>
   </FlowPanel>
