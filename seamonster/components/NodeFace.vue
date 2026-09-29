@@ -11,7 +11,7 @@ defineProps({
 
 <template>
   <div class="flow-node-face" :class="{ 'is-selected': selected }">
-    <span class="flow-node-status">{{ status }}</span>
+    <span class="flow-node-status" :title="status || undefined">{{ status }}</span>
     <span class="flow-node-label">{{ label }}</span>
   </div>
 </template>

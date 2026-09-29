@@ -1,11 +1,15 @@
 <script setup>
+import { computed } from 'vue'
 import FlowPanel from '../components/FlowPanel.vue'
 import NodeFace from '../components/NodeFace.vue'
 import { kindsInCategory, NODE_CATEGORIES, NODE_KIND_DRAG_TYPE, NODE_KINDS } from '../lib/nodeKinds.js'
 
 // The node palette: every kind by category, as cards to drag onto the canvas.
-// A card is the node's real face, scaled down.
-const sections = NODE_CATEGORIES.map((category) => ({ ...category, kinds: kindsInCategory(category.id) }))
+// A card is the node's real face, scaled down. Kinds and categories defined
+// later (see kindRegistry.js) join it; a category with no kinds isn't shown.
+const sections = computed(() =>
+  NODE_CATEGORIES.map((category) => ({ ...category, kinds: kindsInCategory(category.id) })).filter((s) => s.kinds.length),
+)
 
 function onDragStart(kind, e) {
   const card = e.currentTarget.getBoundingClientRect()

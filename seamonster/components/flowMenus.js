@@ -21,8 +21,9 @@ export const NODE_MENU = [
 export const WIRE_MENU = [{ label: 'Delete wire', command: 'wire.delete', shortcut: 'Del' }]
 
 // Categories (with colour badges, from .flow-node--<category>), each a submenu
-// of its node kinds; picking one runs `command` with { kind }.
-const nodeKindItems = (command) =>
+// of its node kinds; picking one runs `command` with { kind }. Built when the
+// menu opens, so kinds defined since (see kindRegistry.js) are in it.
+const nodeKindItems = (command) => () =>
   NODE_CATEGORIES.map((category) => ({
     type: 'submenu',
     label: category.label,
@@ -32,7 +33,7 @@ const nodeKindItems = (command) =>
       command,
       args: { kind },
     })),
-  }))
+  })).filter((category) => category.items.length)
 
 // Opened where a dragged wire is dropped on empty canvas; context is
 // { point, from } (see FlowCanvas's connection-dropped event).

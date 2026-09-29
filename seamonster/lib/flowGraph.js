@@ -1,10 +1,10 @@
-import { computed, reactive } from 'vue'
+import { computed, reactive, watch } from 'vue'
 import { useVueFlow } from '@vue-flow/core'
-import { FILE_FORMATS, formatFromName } from './fileFormats.js'
+import { FILE_FORMATS, formatFromName, formatSize } from './fileFormats.js'
 import { EMPTY_DOCUMENT, fromDocument, toDocument } from './graphDocument.js'
 import { createGraphRunner } from './graphRunner.js'
 import { isTyping } from './keyboard.js'
-import { isAutoId, nextNodeId, referenceName, toIdentifier, uniqueId } from './nodeKinds.js'
+import { inputPinsOf, isAutoId, isCosmetic, nextNodeId, slotsOf, slotsThrough, toIdentifier, uniqueId } from './nodeKinds.js'
 
 export const FLOW_GRAPH = Symbol('flow-graph')
 
@@ -16,12 +16,34 @@ const NODE_HEIGHT = 90
 const INPUT_PIN = { x: 0, y: 0.5 }
 const OUTPUT_PIN = { x: 1, y: 0.5 }
 
-// Data fields that don't change what a node outputs: editing them doesn't
-// make its result stale. (sqlServerTables is worked out from the query.)
-const COSMETIC_FIELDS = new Set(['label', 'autoRun', 'sqlServerTables'])
-
 const message = (e) => e?.message ?? String(e)
 const newKey = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+const rows = (n) => `${n.toLocaleString()} ${n === 1 ? 'row' : 'rows'}`
+
+// A run's result as log entries: what a script printed, then how it ended.
+function resultEntries(result) {
+  const entries = result.output ? [{ type: 'output', text: result.output }] : []
+  if (result.error) {
+    entries.push({ type: 'error', text: result.error })
+  } else if (result.export) {
+    const { filename, contentType, size } = result.export
+    entries.push({ type: 'info', text: `Wrote “${filename}” (${contentType}, ${formatSize(size)}).` })
+  } else if (result.tables) {
+    const list = result.tables.map((t) => `${t.label} (${rows(t.data.rowCount)})`).join(', ')
+    entries.push({ type: 'info', text: `Read ${result.tables.length} ${result.tables.length === 1 ? 'table' : 'tables'}: ${list}.` })
+  } else if (result.data) {
+    entries.push({ type: 'info', text: `Returned ${rows(result.data.rowCount)}.` })
+  } else if (result.value && result.value.kind !== 'none') {
+    entries.push({ type: 'info', text: `Returned a ${result.value.type} (see the Data panel).` })
+  } else if (!result.output) {
+    entries.push({ type: 'note', text: '(no output)' })
+  }
+  if (!result.error && result.slots?.length) {
+    const size = (s) => (s.data ? rows(s.data.rowCount) : `${s.tables.length} tables`)
+    entries.push({ type: 'info', text: `Also: ${result.slots.map((s) => `${s.ref} (${size(s)})`).join(', ')}.` })
+  }
+  return entries
+}
 
 /*
  * The graph shown in one editor: its nodes and wires, and the edits made to
@@ -43,7 +65,20 @@ const newKey = () => `${Date.now().toString(36)}-${Math.random().toString(36).sl
  *
  * A DataIngest node keeps the tables read from its file, not the file, stored
  * by key in `files` (the host's storage, if it has putFile / getFile /
- * deleteFile) and held in memory once used.
+ * deleteFile) and held in memory once used. A kind's `file` field keeps its
+ * file the same way. `reading` holds the IDs of nodes whose file is being
+ * read or stored.
+ *
+ * Logs, shown in the Terminal, aren't saved either. `logs.nodes` holds a log
+ * per node ID, `{ state, entries }`, and `logs.app` the app's own entries
+ * (the server coming and going, Execute Graph, and whatever the host adds
+ * with `log`). An entry is `{ id, type, text, count }`, type being 'output'
+ * (printed), 'error', 'info' or 'note'. Runs append to a node's log. A log
+ * belongs to its node's state, the edit count kept per node (its settings,
+ * its wires, anything upstream, Reset): the first run after a change clears
+ * it before adding. An entry already in a log isn't added again: it counts
+ * the repeat and moves to the end, so an unchanged failing node shows its
+ * error once. The Data panel's pager (turnPage) doesn't log.
  *
  * `server` is the server engine as the host sees it: { status: { state, address,
  * assistant }, query, runPython, assist } (see graphRunner.js, and davy-jones-locker's
@@ -72,6 +107,9 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
   const edits = new Map()
   const fileCache = new Map() // stored file data by key
   const originals = new WeakMap() // node -> the file chosen for it this session, to read again
+  const logs = reactive({ nodes: {}, app: [] })
+  const reading = reactive(new Set())
+  let entrySeq = 0
 
   const selectedNode = computed(() => flow.getSelectedNodes.value[0] ?? null)
 
@@ -103,6 +141,7 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
     deletions.length = 0
     edits.clear()
     Object.assign(run, { started: false, executing: false, status: {}, results: {} })
+    logs.nodes = {}
     flow.setNodes(nodes)
     flow.setEdges(edges.map(makeEdge))
     // SQL nodes saved before their server tables were worked out.
@@ -175,8 +214,14 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
   // Whether a path of wires already leads from `from` to `to`.
   const reaches = (from, to) => from === to || downstreamOf(from).includes(to)
 
-  // The graph must stay acyclic: no wire back into a node's own upstream.
-  const isValidConnection = ({ source, target }) => !reaches(target, source)
+  // The graph must stay acyclic: no wire back into a node's own upstream. A
+  // named input pin takes one wire, unless it says it takes many.
+  function isValidConnection({ source, target, targetHandle }) {
+    if (reaches(target, source)) return false
+    const pin = inputPinsOf(flow.findNode(target)?.data ?? {}).find((p) => p.handle === (targetHandle ?? 'target-0'))
+    if (!pin) return false
+    return pin.many || !flow.edges.value.some((e) => e.target === target && e.targetHandle === pin.handle)
+  }
 
   // A node's output no longer matches its settings or inputs: it (unless
   // `self` is false) and everything downstream that has run become stale.
@@ -193,14 +238,13 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
   async function refreshServerTables(id) {
     const node = flow.findNode(id)
     if (!node || !sql) return
-    const sources = [...new Set(flow.edges.value.filter((e) => e.target === id).map((e) => e.source))]
-      .map((s) => flow.findNode(s))
-      .filter(Boolean)
-      .map((s) => ({
-        name: referenceName(s.id, s.data),
-        tables: s.data.ingest && FILE_FORMATS[s.data.ingest.format].multi ? s.data.ingest.tables.map((t) => t.name) : null,
-      }))
-    const tables = await runner.serverTables(node.data.sqlQuery ?? '', sources)
+    const sources = flow.edges.value
+      .filter((e) => e.target === id)
+      .flatMap((e) => {
+        const source = flow.findNode(e.source)
+        return source ? slotsThrough(e.sourceHandle, source.id, source.data).map((s) => s.ref) : []
+      })
+    const tables = await runner.serverTables(node.data.sqlQuery ?? '', [...new Set(sources)])
     if (flow.findNode(id) !== node) return // deleted or renamed meanwhile
     // Kept even when empty, so a graph opened later knows it's been worked out.
     const previous = node.data.sqlServerTables
@@ -232,7 +276,7 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
     flow.findNode(id).id = nextId
     flow.setEdges(flow.edges.value.map(follow))
     for (const d of deletions) d.edges = d.edges.map(follow)
-    for (const byId of [run.status, run.results]) {
+    for (const byId of [run.status, run.results, logs.nodes]) {
       if (!(id in byId)) continue
       byId[nextId] = byId[id]
       delete byId[id]
@@ -266,24 +310,31 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
     }
   }
 
-  // Name a node's output: read downstream as <id>_<name>. Empty (or "data")
-  // goes back to <id>_data. What reads it by name downstream is stale.
+  // Name a node's output (its first slot): read downstream as <id>_<name>.
+  // Empty (or "data") goes back to <id>_data. What reads it by name
+  // downstream is stale. Returns an error message for a name another of its
+  // slots has, or null.
   function setOutputName(id, name) {
+    const node = flow.findNode(id)
     const suffix = toIdentifier(name)
     const next = suffix && suffix !== 'data' ? suffix : undefined
-    if (next === flow.findNode(id).data.outputSuffix) return
+    if (next === node.data.outputSuffix) return null
+    if (next && slotsOf(id, node.data).some((s) => s.name === next)) {
+      return `This node already has an output called ${next} (${id}_${next}). Choose another name.`
+    }
     flow.updateNodeData(id, { outputSuffix: next })
     markStale(id, { self: false })
+    return null
   }
 
   // Merge fields into a node's data (sqlQuery, autoRun: false, ...). Unless
-  // they're cosmetic, the node's result is stale.
+  // they're cosmetic (see isCosmetic), the node's result is stale.
   function updateData(id, patch) {
     const data = flow.findNode(id).data
     const changed = Object.keys(patch).filter((k) => JSON.stringify(patch[k]) !== JSON.stringify(data[k]))
     if (!changed.length) return
     flow.updateNodeData(id, patch)
-    if (changed.some((k) => !COSMETIC_FIELDS.has(k))) markStale(id)
+    if (changed.some((k) => !isCosmetic(data.kind, k))) markStale(id)
   }
 
   // ---- Stored files (a DataIngest node's tables) ----
@@ -313,10 +364,38 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
   // Resolves to an error message, or null once read.
   async function chooseFile(id, file) {
     const node = flow.findNode(id)
-    const original = { name: file.name, size: file.size, bytes: new Uint8Array(await file.arrayBuffer()) }
-    originals.set(node, original)
-    if (formatFromName(file.name)) updateData(id, { ingestFormat: undefined })
-    return readIngest(node, original, node.data.ingestFormat)
+    reading.add(id)
+    try {
+      const original = { name: file.name, size: file.size, bytes: new Uint8Array(await file.arrayBuffer()) }
+      originals.set(node, original)
+      if (formatFromName(file.name)) updateData(id, { ingestFormat: undefined })
+      return await readIngest(node, original, node.data.ingestFormat)
+    } finally {
+      reading.delete(id)
+    }
+  }
+
+  // A file chosen for a kind's `file` field: stored whole through the host,
+  // the field holding { fileName, fileSize, key } (the node's run reads it
+  // with ctx.getFile(key)). The file it replaces is let go. Resolves to an
+  // error message, or null once stored.
+  async function storeFieldFile(id, fieldKey, file) {
+    const node = flow.findNode(id)
+    reading.add(id)
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      if (flow.findNode(node.id) !== node) return null // deleted meanwhile
+      const key = newKey()
+      await putFile(key, bytes)
+      const previous = node.data[fieldKey]?.key
+      updateData(node.id, { [fieldKey]: { fileName: file.name, fileSize: file.size, key } })
+      if (previous) forgetFile(previous)
+      return null
+    } catch (e) {
+      return `Couldn't keep "${file.name}". ${message(e)}`
+    } finally {
+      reading.delete(id)
+    }
   }
 
   async function readIngest(node, { name, size, bytes }, chosenFormat) {
@@ -350,11 +429,63 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
     const node = flow.findNode(id)
     updateData(id, { ingestFormat: format || undefined })
     const original = originals.get(node)
-    if (original) return readIngest(node, original, format)
+    if (original) {
+      reading.add(id)
+      try {
+        return await readIngest(node, original, format)
+      } finally {
+        reading.delete(id)
+      }
+    }
     const ingest = node.data.ingest
     if (!ingest || (format || formatFromName(ingest.fileName)) === ingest.format) return null
     return `Choose "${ingest.fileName}" again to read it as ${FILE_FORMATS[format]?.label ?? 'that type'}.`
   }
+
+  // ---- Logs ----
+
+  // Add an entry to a list of them, or count it again if it's there already
+  // (moving it to the end, where the latest run's entries are).
+  function append(entries, { type, text }) {
+    const i = entries.findIndex((e) => e.type === type && e.text === text)
+    if (i < 0) {
+      entries.push({ id: ++entrySeq, type, text, count: 1 })
+    } else {
+      const [same] = entries.splice(i, 1)
+      entries.push({ ...same, count: same.count + 1 })
+    }
+  }
+
+  // A node's run, in its log: cleared first if the node has changed since
+  // the log began (`state` is its edit count when the run started).
+  function logRun(id, state, entries) {
+    if (logs.nodes[id]?.state !== state) logs.nodes[id] = { state, entries: [] }
+    for (const entry of entries) append(logs.nodes[id].entries, entry)
+  }
+
+  // An entry in the app's log: `type` is 'info' (default), 'error' or 'note'.
+  const log = (text, type = 'info') => append(logs.app, { type, text })
+
+  // The server coming and going, in the app's log.
+  watch(
+    () => serverStatus.value.state,
+    (state, previous) => {
+      if (state === 'connected') {
+        const { address } = serverStatus.value
+        log(`Connected to the server${address ? ` at ${address}` : ''}.`)
+      } else if (state === 'unavailable') {
+        log(
+          previous === 'connected'
+            ? "Lost the server: nodes that run there can't run until it's back."
+            : server
+              ? "The server isn't available: nodes that run there can't run until it is."
+              : "There's no server: everything runs in this browser, and nodes that need a server can't run.",
+          previous === 'connected' ? 'error' : 'note',
+        )
+      }
+    },
+    { immediate: true },
+  )
 
   // ---- Running ----
 
@@ -367,12 +498,13 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
 
   const serverForRuns = () => ({ state: serverStatus.value.state, query: server?.query, runPython: server?.runPython })
 
-  // Run nodes and everything upstream of them; results land in `run` for
-  // every node that ran. `paged` ({ id, page, table? }) pages one target's
+  // Run nodes and everything upstream of them; results land in `run` (and,
+  // unless `log` is false, the logs) for every node that ran, and are
+  // returned by ID. `paged` ({ id, page, table?, slot? }) pages one target's
   // output. A DataExport node downloads its file when it's one of `ids`, not
   // when it only ran upstream of them.
-  async function runNodes(ids, paged = null) {
-    if (!ids.length) return
+  async function runNodes(ids, paged = null, { log: logging = true } = {}) {
+    if (!ids.length) return {}
     run.started = true
     for (const id of ids) run.status[id] = 'running'
     const editsAtStart = new Map(edits)
@@ -394,17 +526,34 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
       run.results[id] = result
       const edited = (edits.get(id) ?? 0) !== (editsAtStart.get(id) ?? 0)
       run.status[id] = edited ? 'stale' : result.error ? 'failed' : 'completed'
+      if (logging) logRun(id, editsAtStart.get(id) ?? 0, resultEntries(result))
     }
+    return results
   }
 
-  // Run one node (its Run button), optionally at a page of (one table of) its output.
-  const runNode = (id, page = 0, table = null) => runNodes([id], { id, page, table })
+  // Run one node (its Run button), optionally at a page of (one table, in
+  // one slot, of) its output.
+  const runNode = (id, page = 0, table = null, slot = null) => runNodes([id], { id, page, table, slot })
 
-  // Execute Graph: every node with Auto Run on (the default).
+  // Another page of (one table, in one slot, of) a node's output, for the
+  // Data panel's pager: a run like runNode's, but not logged.
+  const turnPage = (id, page, table = null, slot = null) => runNodes([id], { id, page, table, slot }, { log: false })
+
+  // Execute Graph: every node with Auto Run on (the default), summed up in
+  // the app's log.
   async function executeGraph() {
     run.executing = true
     try {
-      await runNodes(flow.nodes.value.filter((n) => n.data.autoRun !== false).map((n) => n.id))
+      const ids = flow.nodes.value.filter((n) => n.data.autoRun !== false).map((n) => n.id)
+      if (!ids.length) {
+        log('Nothing to execute: every node has Auto Run off.', 'note')
+        return
+      }
+      const ran = Object.keys(await runNodes(ids)).filter((id) => run.status[id])
+      const count = (status) => ran.filter((id) => run.status[id] === status).length
+      const parts = [`${count('completed')} completed`, `${count('failed')} failed`]
+      if (count('stale')) parts.push(`${count('stale')} changed while running`)
+      log(`Executed the graph: ${ran.length} ${ran.length === 1 ? 'node' : 'nodes'} ran, ${parts.join(', ')}.`, count('failed') ? 'error' : 'info')
     } finally {
       run.executing = false
     }
@@ -481,10 +630,10 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
   }
 
   return {
-    flow, selectedNode, snapshot, run, server: serverStatus,
+    flow, selectedNode, snapshot, run, logs, log, reading, server: serverStatus,
     load, setContextPoint, addNode, addConnectedNode, connect, isValidConnection,
-    renameNode, setLabel, setOutputName, updateData, chooseFile, setIngestFormat,
-    runNode, executeGraph, resetNode, askAssistant,
+    renameNode, setLabel, setOutputName, updateData, chooseFile, setIngestFormat, storeFieldFile,
+    runNode, turnPage, executeGraph, resetNode, askAssistant,
     remove, undoDelete, onKeydown,
   }
 }

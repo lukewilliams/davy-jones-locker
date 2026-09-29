@@ -50,7 +50,7 @@ styles.css              the editor's tokens (--flow-*) and rules
 widgets/                what a host uses whole
   FlowgraphEditor.vue   the editor: a PanelHost with the canvas, title, panels and menus
   panels/               PanelHost: panels, rails and their keys over any content (seamonster/panels)
-  TerminalPanel.vue     left panels, in this order (T): the selected node's error or summary
+  TerminalPanel.vue     left panels, in this order (T): the selected node's log, or the app's
   LibraryPanel.vue        (L): node cards to drag onto the canvas
   FlowgraphsPanel.vue     (G): Execute Graph
   DataPanel.vue         bottom panel (D): the selected node's output (a tab per table)
@@ -68,6 +68,8 @@ components/             what the editor is built from
   DataTable.vue         one page of a table, and its pager
   NodeProperties.vue    Manage's fields: ID, Name, each kind's own, Run
   AssistantField.vue    Manage's AI assistant, above a node's SQL or code
+  NodeField.vue         one of a kind's declared fields in Manage (text, number, select, code, file...)
+  DataIngestFields.vue, ExportInputField.vue   the built-ins' custom fields (file chooser, Input picker)
   ServerStatus.vue      bottom left: the server connected (green) or not (blue)
   flowMenus.js          the graph's context menus and their commands
 lib/
@@ -78,7 +80,10 @@ lib/
   jsSandbox.js          runs a JavaScript node's code in a sandboxed iframe's worker
   fileFormats.js        the file formats DataIngest reads and DataExport writes
   xlsx.js               a workbook's sheet names, and repairing DuckDB-wasm's xlsx output
-  nodeKinds.js          node kinds and categories, node IDs, reference names
+  nodeKinds.js          import node kinds from here: the registry, with the built-ins defined in it
+  kindRegistry.js       the registry: defineNodeKind, defineNodeCategory, node IDs, reference names
+  builtinKinds.js       SEAMONSTER's own kinds (SQLQuery, JavaScript, DataIngest...), defined like an app's
+  sqlText.js            DuckDB SQL pieces the runner and the built-ins share
   panelLayout.js        all panel layout state and rules (one per window)
   themes.js             the theme registry: the built-in themes and defineTheme
   keyboard.js           isTyping: where single-key shortcuts must not fire
@@ -281,6 +286,20 @@ SQL:
   LOCKER's), and the file itself isn't kept. File Type defaults to the extension;
   changing it re-reads the file if it was chosen this session, else asks for
   it again.
+- **Several tables** (Excel and SQLite, even with one sheet or table): each
+  is named by its sheet or table name as an identifier (`toIdentifier`:
+  lower case, each run of anything but letters and digits as one `_`, none at
+  either end, `_` before a leading digit; `table` if nothing's left), then
+  numbered if that's taken (`sales`, `sales1`): `Q1 Sales` is `q1_sales`,
+  `2024` is `_2024`. Downstream it's `<reference name>.<table>` everywhere: a
+  schema in SQL, in the browser and on the engine
+  (`SELECT * FROM dataingest1_data.q1_sales`; the reference name alone isn't
+  a table); attributes of an object in Python (`getattr` for a keyword like
+  `class`); properties of an object in JavaScript; DataExport's **Input**; the
+  engine's `input` filenames. Manage lists the first three under the node's
+  ID, and a Data panel tab whose sheet name differs shows the table's name
+  on hover. The names are fixed when the file is read: choosing a file whose
+  sheets were renamed renames the tables, and code naming the old ones fails.
 - **DataExport** writes a node wired into it to a file, as its File Type or
   the filename's extension (CSV if neither): CSV, TSV, JSON, GeoJSON (needs a
   geometry column), Parquet, Excel (one table) or SQLite (every table). With
@@ -316,6 +335,167 @@ node back to not run. Nodes show their status top left, and wires take their
 colours from it (see the roadmap's wire table; stale counts as not run).
 Unavailable buttons use `aria-disabled` rather than `disabled`, which would
 drop keyboard focus, and with it the editor's hotkeys.
+
+## Defining node kinds
+
+Node kinds live in a registry. SEAMONSTER's own are defined in it
+([builtinKinds.js](lib/builtinKinds.js)) exactly as an app defines its own,
+with `defineNodeKind` and `defineNodeCategory`, both exported. Define them
+before FlowgraphEditor mounts, as themes are:
+
+```js
+import { defineNodeCategory, defineNodeKind } from 'seamonster'
+
+defineNodeCategory({ id: 'geo', label: 'Geo', colors: { from: '#7dd3a8', to: '#2f855a' } })
+
+defineNodeKind({
+  kind: 'geo.double',          // stored in saved graphs; namespace an app's or plugin's with a dot
+  label: 'Double',             // the name on its face, in the Library and in the menus
+  category: 'geo',             // a built-in category's id, or one defined as above
+  outputName: true,            // Manage offers Output Name
+  async run(ctx) {
+    const [input] = ctx.inputs
+    if (!input) return { error: 'Wire a node in.' }
+    const table = ctx.table()
+    await ctx.sql.query(`CREATE TABLE ${table} AS SELECT n * 2 AS n2 FROM ${input.table}`)
+    return { table, output: `doubled ${input.ref}` }
+  },
+})
+```
+
+It appears in the Library, the canvas menu and the menu for a wire dropped
+on the canvas, runs, and is saved and loaded like any node. The registry is
+reactive, so a kind defined after mounting appears too. A category's
+`colors` are its face's gradient (`from`, `to`) and, optionally, its name's
+colour (`label`, white by default).
+
+**A kind's definition.** Only `kind`, `label` and `category` are needed.
+
+| | |
+|---|---|
+| `kind` | lowercase letters, digits and hyphens, with one dot at most (`sql-query`, `geo.double`) |
+| `idPrefix` | new nodes' IDs are `<idPrefix><n>`; by default the label, lowercase without spaces (`double1`) |
+| `run(ctx)` | runs it in the browser; without it, the node says it can't run yet |
+| `runs` | whether Manage shows Auto Run and Run; by default, whether there's a `run` |
+| `where` | `'server'` (it runs only there, and says so), `'browser'` (never on the server), or a function of the node's data returning either (SQLQuery's). Unset: the browser |
+| `outputName` | whether Manage offers Output Name |
+| `fields` | what Manage shows for it, in order (below), each kept on the node's data under its `key` |
+| `canRun(data)` | a reason it can't run yet (shown under Run), or null |
+| `runHint` | the line under Run (where results go, by default) |
+| `slots` | its outputs beyond the first, `[{ name, label?, pin? }]` or a function of the node's data (below) |
+| `inputPins` | named input pins beside the main one, `[{ name, label?, many? }]` or a function of the data (below) |
+
+**`ctx`**, what `run` is given:
+
+| | |
+|---|---|
+| `id`, `node` | the node's ID, and its data (kind, label and its own fields, with their defaults) |
+| `inputs` | what's wired in, one per slot each wire carries: `[{ id, kind, slot, ref, pin, table }]`, or with `tables: [{ name, label, table }]` for one with several. `id` is the node it's from, `slot` null for that node's first slot, `ref` the reference name it's read by, `pin` null for the main input pin or the named pin it came through, `table` a table name for SQL. The search path also finds each input by `ref` |
+| `sql` | the host's SQL engine (`query`, `registerFile`, `readFile`, `dropFile`) |
+| `server` | the server: `{ state, query?, runPython? }`, as FlowgraphEditor's `server` |
+| `getFile(key)` | bytes the host stored by key |
+| `table(name?)` | a name for this node's output table (one of several, with a name): create it, then return it |
+| `slotTable(slot, name?)` | the same, for one of its other slots |
+| `rows(input)` | an input's rows as objects by column (an object of them by table name, for several) |
+| `parquet()` | the inputs as Parquet, `[{ name, bytes }]`, named as the node reads them, for sending to a server |
+| `loadParquet(table, bytes)`, `loadRows(table, rows)` | create a table from Parquet, or from rows |
+| `serverTables(query)` | the tables a query reads that no input supplies |
+
+**What `run` returns** (or throws, for an error):
+
+| | |
+|---|---|
+| `table` | its output table; or `tables: [{ name, label, table }]` for several, shown as tabs in Data and read downstream as `<ref>.<name>` |
+| `slots` | its other slots: `{ [slot]: table }`, or `{ [slot]: { tables } }`; a slot left out is an empty table |
+| `value` | a value that isn't a table, shown in Data. With no table, downstream reads an empty one |
+| `export` | `{ filename, contentType, size, bytes }`: a file, saved when this node is the one run |
+| `output` | what it printed, for the Terminal |
+| `error` | why it failed |
+
+Anything else it returns stays on the result (PythonScript's `variables`).
+A saved graph naming a kind this app doesn't have keeps the node as a
+placeholder (see Keeping the open graph).
+
+**Fields.** Manage shows a node's ID and Name, then its kind's `fields`,
+then Output Name and Run. Text, number and code fields hold a draft and
+commit on blur or Enter (Ctrl+Enter in code also runs the node); the rest
+commit straight away. The built-ins declare theirs the same way.
+
+```js
+fields: [
+  { key: 'crs', label: 'Output CRS', type: 'text', mono: true, default: 'EPSG:4326',
+    validate: [{ pattern: '^EPSG:\\d+$', message: 'Use EPSG:<code>.' }] },
+  { key: 'tolerance', label: 'Tolerance (m)', type: 'number', default: 3, min: 0,
+    validate: [{ min: 2.5, severity: 'warn', message: 'Smaller than the datum offsets.' }] },
+  { key: 'mode', label: 'Mode', type: 'select', options: [{ value: 'fast', label: 'Fast' }, { value: 'exact', label: 'Exact' }] },
+  { key: 'source', label: 'Source', type: 'file', accept: '.kml,.geojson' },
+]
+```
+
+| Type | Its own options |
+|---|---|
+| `text` | `placeholder`, `mono` |
+| `number` | `placeholder`, `min`, `max`, `step` |
+| `select` | `options`: `[{ value, label }]`, or a function of the node's data; `''` is stored as nothing |
+| `checkbox` | |
+| `code` | `language` (`sql`, `python`, `javascript`, `text`), `placeholder`, `rows`; `assistant: true` puts the AI assistant above it (the server's assistant writes code for SQLQuery, PythonScript and JavaScript) |
+| `file` | `accept`. The file is stored through the host's storage and the field holds `{ fileName, fileSize, key }`; `run` reads it with `ctx.getFile(key)` |
+| `readonly` | `value(data)`: text to show |
+| `custom` | `component`: a Vue component given `node`, for what no type does (DataIngest's file chooser) |
+
+Every field can also have `default` (its value until one is set; `run` sees
+it too), `hint` (a line under it, with `` `backticks` `` for code, or a
+function `(data, typed) => text`), `affectsOutput: false` (editing it
+doesn't make the node stale) and `visible(data)`.
+
+**Rules.** A field's `validate` is a list of rules, each with a `message`,
+an optional `severity` (`'error'`, the default, or `'warn'`) and one test:
+`required: true`, `min`, `max`, `pattern` (a regex, for text), or `when:
+(value, data) => true when it's wrong`. Rules are checked as a field is
+edited. An error shows under the field, stops the node running (Run says
+why), and is its status on the canvas until it has run; a warning shows under
+the field and as a badge on the node, whose tooltip says what it is. Rules
+other than `when` are plain data, so a kind the server defines can carry
+them.
+
+**Slots and pins.** A node's outputs are slots. The first is what `run`
+returns as its table, read downstream by the node's reference name
+(`<id>_data`, or `<id>_<Output Name>`). A kind's `slots` add more, each read
+as `<id>_<slot>` and filled through `slots` in what `run` returns:
+
+```js
+defineNodeKind({
+  kind: 'geo.classify', label: 'Classify', category: 'geo',
+  slots: [{ name: 'summary' }, { name: 'status', pin: true }],
+  async run(ctx) {
+    const table = ctx.table()                  // classify_data
+    const summary = ctx.slotTable('summary')   // classify_summary
+    // ... create both ...
+    return { table, slots: { summary } }       // status: left out, so an empty table
+  },
+})
+```
+
+- **One output pin carries every slot.** Wiring it gives the node downstream
+  all of them, each by its reference name; hovering it lists them.
+- **A slot can have a pin of its own,** carrying just that slot: when its
+  kind says `pin: true`, or when the node's data lists the slot in `slotPins`
+  (the user's choice; step 9 adds the controls). The main pin still carries
+  it, so giving a slot a pin never breaks a wire. Named pins show their
+  names while the node is hovered.
+- **Inputs** come through the main input pin, any number of wires. A kind's
+  `inputPins` add named ones for inputs with a role (`ctx.inputs[i].pin` says
+  which pin each came through); a named pin takes one wire unless it says
+  `many: true`. Users don't add input pins.
+- **Handles:** the main pins are `source-0` and `target-0`, as before, so saved
+  graphs load unchanged; the others are named, `source:<slot>` and
+  `target:<name>`, so reordering pins never rewires a graph.
+- **Shown:** Data has a tab per slot, named as downstream code reads it; the
+  Terminal lists the other slots' sizes after a run. Output Name can't take
+  the name of another of the node's slots.
+- A saved graph's wires carry their handles, and the server's whole-graph
+  runs (`/execute`) don't read them yet: there they see each node's first
+  slot only. No kind that runs on the server has other slots so far.
 
 ## AI assistant
 
@@ -361,6 +541,27 @@ bottom and Manage on the right. All but Manage start collapsed. Flowgraphs is
 `aboveBottom`: it sits above Data, which runs underneath it. (Terminal was
 called Console in 0.1; it was renamed so it isn't mistaken for the
 browser's DevTools console, and its hotkey moved from C to T.)
+
+**The Terminal's logs.** Each node has a log, and so does the app. The
+Terminal shows the selected node's, or the app's when nothing is selected,
+newest at the bottom.
+
+- A run adds to its node's log: what a script printed, then its error or a
+  summary ("Returned 250 rows."). Everything upstream that ran with it adds
+  to theirs.
+- A log belongs to its node's current state: its settings, its wires,
+  anything upstream, and Reset. The first run after any of those changes
+  clears the log before adding to it, so errors a change dealt with go away,
+  even if the new run fails differently. Until then a stale node's log says
+  it has changed since.
+- An entry already in the log isn't added again: it moves to the end and
+  counts the repeat (×2), so an unchanged failing node shows its error once.
+- The app's log has the server connecting and going away, and Execute
+  Graph's summary. A host adds to it with the graph store's `log(text,
+  type)`, type being `'info'` (the default), `'error'` or `'note'`; the
+  entries are in `logs.app`, and each node's in `logs.nodes[id]`.
+- Turning pages in Data doesn't log (it runs the node through `turnPage`).
+  Logs aren't saved, like run state.
 
 The behaviour lives in [panelLayout.js](lib/panelLayout.js):
 
@@ -461,6 +662,5 @@ so this styling reaches only its menus.
 Step 8f: a command field at the bottom of the Terminal panel (~ focuses it).
 `f.` commands run in the browser (`f.Theme = "FLOW"`,
 `f.Security.DisconnectBackend`), `b.` commands on the engine
-(`b.LiteLLMKey = "…"`), with completion and namespaces. The Terminal's logs
-also change: they append, and clear when a node's state changes. The design
-is in the roadmap (step 8f).
+(`b.LiteLLMKey = "…"`), with completion and namespaces. The commands and
+their results go in the app's log. The design is in the roadmap (step 8f).

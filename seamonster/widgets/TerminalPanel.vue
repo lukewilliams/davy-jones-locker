@@ -1,44 +1,60 @@
 <script setup>
-import { computed, inject } from 'vue'
+import { computed, inject, nextTick, ref, watch } from 'vue'
 import FlowPanel from '../components/FlowPanel.vue'
 import { FLOW_GRAPH } from '../lib/flowGraph.js'
-import { formatSize } from '../lib/fileFormats.js'
 
-// The selected node's last run, as a message: its error, or what it produced.
+// The selected node's log, or the app's when nothing is selected (see the
+// logs in flowGraph.js): newest at the bottom, kept in view as entries arrive.
 const graph = inject(FLOW_GRAPH)
 const node = graph.selectedNode
-const result = computed(() => node.value && graph.run.results[node.value.id])
+const entries = computed(() => (node.value ? (graph.logs.nodes[node.value.id]?.entries ?? []) : graph.logs.app))
 const stale = computed(() => node.value && graph.run.status[node.value.id] === 'stale')
 
-const rows = (n) => `${n.toLocaleString()} ${n === 1 ? 'row' : 'rows'}`
-const tables = (list) => list.map((t) => `${t.label} (${rows(t.data.rowCount)})`).join(', ')
+const ENTRY_CLASSES = {
+  output: 'flow-terminal-output',
+  error: 'flow-terminal-error',
+  info: 'flow-terminal-line',
+  note: 'flow-terminal-line flow-terminal-note',
+}
+
+// Follow the end of the log while it's in view there; a switch to another
+// log starts at its end.
+const scroller = ref(null)
+const atEnd = () => {
+  const el = scroller.value
+  return !el || el.scrollHeight - el.scrollTop - el.clientHeight < 24
+}
+watch(
+  () => [node.value?.id, entries.value.at(-1)?.id, entries.value.at(-1)?.count, stale.value],
+  async ([id], [previousId] = []) => {
+    if (id !== previousId || atEnd()) {
+      await nextTick()
+      if (scroller.value) scroller.value.scrollTop = scroller.value.scrollHeight
+    }
+  },
+  { flush: 'pre' },
+)
 </script>
 
 <template>
   <FlowPanel class="terminal-panel" name="terminal" title="Terminal" dock="left" hotkey="T" :default-size="280" collapsed>
-    <div class="flow-terminal">
-      <p v-if="!result" class="flow-panel-empty">
+    <div ref="scroller" class="flow-terminal">
+      <p v-if="!entries.length" class="flow-panel-empty">
         Nothing to show yet — run a node to see its output or errors here.
       </p>
-      <template v-else>
-        <p v-if="stale" class="flow-terminal-line flow-terminal-note">
-          This node has changed since it ran (or something upstream has). Run it again to update this.
-        </p>
-        <!-- What a script printed, then how it ended. -->
-        <pre v-if="result.output" class="flow-terminal-output">{{ result.output }}</pre>
-        <pre v-if="result.error" class="flow-terminal-error">{{ result.error }}</pre>
-        <p v-else-if="result.export" class="flow-terminal-line">
-          Wrote “{{ result.export.filename }}” ({{ result.export.contentType }}, {{ formatSize(result.export.size) }}).
-        </p>
-        <p v-else-if="result.tables" class="flow-terminal-line">
-          Read {{ result.tables.length }} {{ result.tables.length === 1 ? 'table' : 'tables' }}: {{ tables(result.tables) }}.
-        </p>
-        <p v-else-if="result.data" class="flow-terminal-line">Returned {{ rows(result.data.rowCount) }}.</p>
-        <p v-else-if="result.value && result.value.kind !== 'none'" class="flow-terminal-line">
-          Returned a {{ result.value.type }} (see the Data panel).
-        </p>
-        <p v-else-if="!result.output" class="flow-terminal-line flow-terminal-note">(no output)</p>
-      </template>
+      <component
+        :is="entry.type === 'output' || entry.type === 'error' ? 'pre' : 'p'"
+        v-for="entry in entries"
+        :key="entry.id"
+        :class="ENTRY_CLASSES[entry.type]"
+      >{{ entry.text }}<span
+        v-if="entry.count > 1"
+        class="flow-terminal-count"
+        :title="node ? `${entry.count} times since this node last changed` : `${entry.count} times`"
+      > ×{{ entry.count }}</span></component>
+      <p v-if="stale && entries.length" class="flow-terminal-line flow-terminal-note">
+        This node has changed since it ran (or something upstream has). Its next run starts a new log.
+      </p>
     </div>
   </FlowPanel>
 </template>

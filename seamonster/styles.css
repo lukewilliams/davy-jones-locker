@@ -19,6 +19,7 @@
   --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
   --flow-error: #f87171;
+  --flow-warning: #fbbf24;
   --flow-table-header-bg: #141416; /* opaque, so rows scroll under it */
 
   --flow-editor-bg: #000;
@@ -505,6 +506,23 @@ button.flow-panel-title {
 .flow-field-hint  { color: var(--flow-text-faint); }
 .flow-field-error { color: var(--flow-error); }
 
+/* A field rule's warning: the node still runs. */
+.flow-field-warning {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--flow-warning);
+}
+
+/* A read-only field's value (a kind's `readonly` field). */
+.flow-field-readonly {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--flow-text-muted);
+  overflow-wrap: anywhere;
+}
+
 /* Something to know before running (a node that sends data to the server). */
 .flow-field-note {
   margin: 0;
@@ -759,6 +777,10 @@ button.flow-panel-title {
   cursor: pointer;
 }
 
+.flow-tab--mono {
+  font-family: var(--font-mono);
+}
+
 .flow-tab:hover {
   color: var(--flow-text);
 }
@@ -840,7 +862,7 @@ button.flow-panel-title {
   overflow-wrap: anywhere;
 }
 
-/* The Terminal panel: one message, or an error. */
+/* The Terminal panel: a log, newest at the bottom. */
 .flow-terminal {
   box-sizing: border-box;
   height: 100%;
@@ -876,6 +898,12 @@ button.flow-panel-title {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   color: var(--flow-error);
+}
+
+/* How many times an entry has come up since its log began. */
+.flow-terminal-count {
+  font-family: var(--font-sans);
+  color: var(--flow-text-muted);
 }
 
 /* The Library: category sections of node cards, scrolling. */
@@ -947,7 +975,7 @@ button.flow-panel-title {
 .flow-node--import   { --node-color-from: #f7b955; --node-color-to: #d1741f; --node-label-color: #fff; } /* DataIngest, DXF Import */
 .flow-node--export   { --node-color-from: #f2716b; --node-color-to: #b02020; --node-label-color: #fff; } /* DataExport */
 .flow-node--custom   { --node-color-from: #f5f5f7; --node-color-to: #c7c9cf; --node-label-color: #000; } /* Subnet, custom nodes */
-.flow-node--boundary { --node-color-from: #8b95a5; --node-color-to: #4a5568; --node-label-color: #fff; } /* Begin, Exit */
+.flow-node--boundary { --node-color-from: #8b95a5; --node-color-to: #4a5568; --node-label-color: #fff; } /* a subnet's Input and Output nodes */
 .flow-node--unknown  { --node-color-from: #6b7280; --node-color-to: #374151; --node-label-color: #fff; } /* a kind this app doesn't have */
 
 /* A placeholder for a kind this app doesn't have: greyed in every theme. */
@@ -992,6 +1020,12 @@ button.flow-panel-title {
   font-size: 12px;
   line-height: 1.25;
   color: rgb(0 0 0 / 0.75);
+  /* One line, clear of the top-right dot and badge: a long one (a
+   * settings error) ends in … and shows whole as a tooltip. */
+  max-width: calc(100% - 1.5rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .flow-node-label {
@@ -1126,7 +1160,10 @@ button.flow-panel-title {
 .flow-node-ref-hint {
   position: absolute;
   right: 0;
-  bottom: -1.2em;
+  top: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
   font-size: 10px;
   font-weight: 500;
   line-height: 1.25;
@@ -1134,6 +1171,22 @@ button.flow-panel-title {
   color: var(--node-color-from);
   pointer-events: none;
 }
+
+/* A named pin's name while the node is hovered: just outside the node,
+ * above the pin's wire, clear of the node's own name. */
+.flow-pin-label {
+  position: absolute;
+  transform: translateY(-115%);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--node-color-from);
+  pointer-events: none;
+}
+
+.flow-pin-label--in  { right: calc(100% + 0.5rem); }
+.flow-pin-label--out { left: calc(100% + 0.5rem); }
 
 /* ---- Blinking dot: fades off and on twice a second, in its text's colour ---- */
 @keyframes flow-blink {
@@ -1171,6 +1224,28 @@ button.flow-panel-title {
   width: 10px;
   height: 10px;
   color: var(--node-label-color, #fff);
+}
+
+/* Warnings about a node's settings: a small badge top right (left of the
+ * server dot, when that's there); what they say is its tooltip. */
+.flow-node-warning {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.625rem;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--flow-warning);
+  color: #000;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  cursor: default;
+}
+
+.flow-node-warning.is-beside-dot {
+  right: 1.75rem;
 }
 
 /* The server's state, bottom left in the window's edge gap, coloured by a
