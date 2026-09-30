@@ -4,7 +4,7 @@ import { FILE_FORMATS, formatFromName, formatSize } from './fileFormats.js'
 import { EMPTY_DOCUMENT, fromDocument, toDocument } from './graphDocument.js'
 import { createGraphRunner } from './graphRunner.js'
 import { isTyping } from './keyboard.js'
-import { inputPinsOf, isAutoId, isCosmetic, nextNodeId, slotsOf, slotsThrough, toIdentifier, uniqueId } from './nodeKinds.js'
+import { inputPinsOf, isAutoId, isCosmetic, nextNodeId, NODE_KINDS, slotsOf, slotsThrough, toIdentifier, uniqueId } from './nodeKinds.js'
 
 export const FLOW_GRAPH = Symbol('flow-graph')
 
@@ -81,9 +81,9 @@ function resultEntries(result) {
  * error once. The Data panel's pager (turnPage) doesn't log.
  *
  * `server` is the server engine as the host sees it: { status: { state, address,
- * assistant }, query, runPython, assist } (see graphRunner.js, and davy-jones-locker's
- * engine client), status reactive, state being 'checking', 'connected' or
- * 'unavailable'. Without it, there's no server: everything runs in the
+ * assistant }, query, runPython, runNode, assist } (see graphRunner.js, and
+ * davy-jones-locker's engine client), status reactive, state being 'checking',
+ * 'connected' or 'unavailable'. runNode runs the kinds the server supplies. Without it, there's no server: everything runs in the
  * browser, and what can't doesn't run. `assist` and status.assistant ({ model,
  * sampleRows }) are the AI assistant, when the server has one set up.
  *
@@ -144,9 +144,11 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
     logs.nodes = {}
     flow.setNodes(nodes)
     flow.setEdges(edges.map(makeEdge))
-    // SQL nodes saved before their server tables were worked out.
+    // Which tables SQL nodes read from the server, worked out again: what
+    // they read from their inputs depends on kinds this page has now (a node
+    // saved as a placeholder's neighbour may read that node's slots).
     for (const n of nodes) {
-      if (n.data.kind === 'sql-query' && n.data.sqlQuery && !n.data.sqlServerTables) refreshServerTables(n.id)
+      if (n.data.kind === 'sql-query' && n.data.sqlQuery) refreshServerTables(n.id)
     }
     if (viewport) {
       flow.setViewport(viewport)
@@ -252,6 +254,18 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
       flow.updateNodeData(id, { sqlServerTables: tables })
     }
   }
+
+  // A kind defined after the graph opened (one the server supplies) can bring
+  // slots that SQL nodes read: which tables they read from the server is
+  // worked out again.
+  watch(
+    () => Object.keys(NODE_KINDS).length,
+    () => {
+      for (const n of flow.nodes.value) {
+        if (n.data.kind === 'sql-query' && n.data.sqlQuery) refreshServerTables(n.id)
+      }
+    },
+  )
 
   // Back to not run: the node's status and result are cleared, and whatever
   // ran downstream of it is stale.
@@ -496,7 +510,9 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
-  const serverForRuns = () => ({ state: serverStatus.value.state, query: server?.query, runPython: server?.runPython })
+  const serverForRuns = () => ({
+    state: serverStatus.value.state, query: server?.query, runPython: server?.runPython, runNode: server?.runNode,
+  })
 
   // Run nodes and everything upstream of them; results land in `run` (and,
   // unless `log` is false, the logs) for every node that ran, and are

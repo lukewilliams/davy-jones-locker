@@ -1,9 +1,14 @@
 """The engine: FastAPI, on port 3000. An app makes its own with create_app()
 (`app` here is one with nothing added, for running the engine as it is).
 
-  GET  /health                  { status: 'ok', host, port }: the app checks this
+  GET  /health                  { status: 'ok', host, port, assistant, nodes }: the
+                                app checks this (`nodes`: the app's node kinds' names)
+  GET  /nodes                   the app's node kinds and categories (nodes.py), for
+                                the browser to define
   POST /query                   SQL over the query database, with inputs as Parquet
   POST /run/python              a PythonScript node, run in the sandbox (runner/)
+  POST /run/node                a node of one of the app's kinds, run by the node
+                                worker (nodeworker/)
   GET  /graphs                  saved graphs
   PUT  /graphs/{id}             save one: { name, document }
   GET  /graphs/{id}             one, with its document
@@ -15,8 +20,15 @@
 
 Errors are JSON { error }, their message meant for the user. There's no
 sign-in yet: keep the engine off the public internet until there is.
+
+Requests from the sandboxes (the runner, the node worker) are refused, every
+one of them (see settings.SANDBOX_HOSTS): code runs there, and nothing it does
+may reach the engine.
 """
 
+import asyncio
+import ipaddress
+import json
 import logging
 import socket
 from contextlib import asynccontextmanager
@@ -28,7 +40,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
-from . import assist, database, executor, formdata, runner, settings, sql
+from . import assist, database, executor, formdata, noderunner, nodes, runner, settings, sql
 
 log = logging.getLogger("davy-jones-locker")
 MAX_UPLOAD = settings.MAX_UPLOAD_MB * 1024 * 1024
@@ -59,7 +71,7 @@ async def no_database(_: Request, e: database.NoDatabase):
     return error(str(e), 503)
 
 
-async def no_runner(_: Request, e: runner.RunnerUnavailable):
+async def no_runner(_: Request, e: runner.RunnerUnavailable | noderunner.WorkerUnavailable):
     return error(str(e), 503)
 
 
@@ -73,8 +85,13 @@ async def invalid_request(_: Request, e: RequestValidationError):
 def health():
     return {
         "status": "ok", "host": settings.PUBLIC_HOST, "port": settings.PORT, "hostname": socket.gethostname(),
-        "assistant": assist.summary(),
+        "assistant": assist.summary(), "nodes": sorted(noderunner.KINDS),
     }
+
+
+@router.get("/nodes")
+def list_nodes():
+    return noderunner.describe()
 
 
 async def read_body(request: Request) -> bytes:
@@ -120,6 +137,34 @@ async def run_python(request: Request):
     except ValueError as e:
         return error(str(e), 413)
     content, content_type, status = await runner.forward(body, request.headers.get("content-type", ""))
+    return Response(content, status_code=status, media_type=content_type)
+
+
+@router.post("/run/node")
+async def run_node(request: Request):
+    """Form data: `kind`, `node` (JSON: its data), `inputs` (JSON: what's
+    wired in, one per slot each wire carries, naming its Parquet parts), an
+    `input` part per table and a `file` part per file field's file (see
+    nodeworker/server.py). Checked here (the kind is the app's, its settings
+    pass their rules), then run by the node worker, whose form data answers."""
+    try:
+        body = await read_body(request)
+        parts = formdata.decode(body, request.headers.get("content-type", ""))
+    except ValueError as e:
+        return error(str(e), 413 if "bigger" in str(e) else 400)
+    fields = {name: data for name, data, _, filename in parts if not filename}
+    name = fields.get("kind", b"").decode("utf-8", "replace")
+    kind = noderunner.KINDS.get(name)
+    if kind is None:
+        return error(f"This engine has no {name or 'such'} nodes.", 404)
+    try:
+        node = json.loads(fields.get("node") or b"{}")
+    except ValueError:
+        return error("The node's data wasn't JSON.")
+    problems = kind.errors(node)
+    if problems:
+        return error(" ".join(problems))
+    content, content_type, status = await noderunner.forward(kind, body, request.headers.get("content-type", ""))
     return Response(content, status_code=status, media_type=content_type)
 
 
@@ -214,12 +259,54 @@ async def put_file(key: str, request: Request):
     return {"key": key, "size": len(body)}
 
 
-def create_app(title: str = "davy-jones-locker") -> FastAPI:
-    """The engine as a FastAPI app. An app's entry point calls this (and, from
-    step 8f, passes its own commands)."""
+# ---- Refusing the sandboxes ----
+
+def _address(text: str):
+    try:
+        address = ipaddress.ip_address(text.split("%", 1)[0])
+    except ValueError:
+        return None
+    return getattr(address, "ipv4_mapped", None) or address
+
+
+async def sandbox_addresses() -> set:
+    """The sandboxes' addresses now, loopback left out."""
+    loop = asyncio.get_running_loop()
+    found = set()
+    for host in settings.SANDBOX_HOSTS:
+        try:
+            infos = await loop.getaddrinfo(host, None)
+        except OSError:
+            continue  # not running (or not on this network): nothing to refuse
+        for info in infos:
+            address = _address(info[4][0])
+            if address and not address.is_loopback:
+                found.add(address)
+    return found
+
+
+async def refuse_sandboxes(request: Request, call_next):
+    client = _address(request.client.host) if request.client else None
+    if client and not client.is_loopback and client in await sandbox_addresses():
+        log.warning("Refused %s %s from a sandbox (%s).", request.method, request.url.path, client)
+        return error("The engine doesn't take requests from its sandboxes.", 403)
+    return await call_next(request)
+
+
+def create_app(
+    title: str = "davy-jones-locker",
+    nodes: list[nodes.NodeKind] | None = None,
+    categories: list[nodes.NodeCategory] | None = None,
+) -> FastAPI:
+    """The engine as a FastAPI app. An app's entry point calls this, with its
+    own node kinds and their categories (see nodes.py), and from step 8f its
+    own commands."""
+    noderunner.register(nodes or [], categories or [])
     app = FastAPI(title=title, lifespan=lifespan)
+    app.middleware("http")(refuse_sandboxes)
     app.add_exception_handler(database.NoDatabase, no_database)
     app.add_exception_handler(runner.RunnerUnavailable, no_runner)
+    app.add_exception_handler(noderunner.WorkerUnavailable, no_runner)
     app.add_exception_handler(RequestValidationError, invalid_request)
     app.include_router(router)
     return app

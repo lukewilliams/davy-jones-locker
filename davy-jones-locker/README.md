@@ -7,14 +7,15 @@ An app framework for flowgraphs, built on SEAMONSTER (the UI library). It
 supplies what SEAMONSTER's editor leaves to its host: a browser shell that
 runs SQL in the browser and keeps the open graph, and a Python engine that
 runs what the browser can't. An app built on it chooses its title, themes,
-engine settings and (later) its own console commands.
+engine settings, its own node kinds (written in Python, run on the engine)
+and (later) its own console commands.
 
 | Folder | What | Released as |
 |---|---|---|
 | [app/](app/) | the browser shell: the engine client, DuckDB-wasm, storage, and `DavyJonesLocker`, the whole window | `davy-jones-locker` on npm |
-| [engine/](engine/README.md) | the Python engine (FastAPI) and its sandboxed runner | `davy-jones-locker` on PyPI, and base images |
+| [engine/](engine/README.md) | the Python engine (FastAPI), its sandboxed runner, and the node worker for the app's own node kinds | `davy-jones-locker` on PyPI, and base images |
 | [engine-shared/](engine-shared/README.md) | optional development services: Postgres, later identity and storage | (with the repo) |
-| [compose.yaml](compose.yaml) | the engine and runner as an app runs them, to copy | (with the repo) |
+| [compose.yaml](compose.yaml) | the engine, runner and node worker as an app runs them, to copy | (with the repo) |
 
 ## The app shell
 
@@ -47,7 +48,15 @@ The parts are exported too, for an app that wires `FlowgraphEditor` itself:
 
 - `createEngineClient({ url, name })`: the engine as FlowgraphEditor's `server`
   prop ([engineClient.js](app/engineClient.js)), checking its `/health` every
-  5 s while it answers and every 15 s while it doesn't.
+  5 s while it answers and every 15 s while it doesn't. Its `runNode` runs a
+  node of one of the app's own kinds, and `nodes()` lists them.
+- `defineServerKinds(client)`: defines the engine's own node kinds and
+  categories in the browser (with SEAMONSTER's `defineNodeKind`), whenever the
+  engine's list of them changes ([serverKinds.js](app/serverKinds.js)). A
+  graph's nodes of those kinds are placeholders until then. A kind the app
+  already defined in the browser keeps that definition, and one the engine
+  changes while the page is open changes on the next reload.
+  `DavyJonesLocker` does this itself.
 - `duckdbSql`: FlowgraphEditor's `sql` prop ([duckdbSql.js](app/duckdbSql.js)):
   DuckDB-wasm (1.32.0) and sql.js (1.13.0), loaded from jsDelivr when first
   needed, never bundled.
@@ -60,14 +69,18 @@ Vite's `resolve.dedupe` with Vue and Vue Flow.
 
 ## The engine
 
-See [engine/README.md](engine/README.md): the API, settings, safeguards, and
-how an app builds its engine on the framework's (`create_app`, and an image
-`FROM davy-jones-locker-engine`).
+See [engine/README.md](engine/README.md): the API, settings, safeguards, the
+app's own node kinds (`nodes.py`, the node worker), and how an app builds its
+engine on the framework's (`create_app`, and an image `FROM
+davy-jones-locker-engine`).
 
 ## Rules
 
 - JavaScript nodes never run on the engine until it has safeguards for them.
-- Nothing with credentials reaches the runner: `runner.env` has limits only.
+- Nothing with credentials reaches the runner or the node worker:
+  `runner.env` and `node-worker.env` have limits only.
+- The engine refuses every request from the runner and the node worker.
+- The app's node kinds run in the node worker, never in the engine.
 - Secrets live in the engine's `.env`, never in the browser.
 - Python libraries are enabled by editing `engine/runner/requirements.in`,
   recompiling with hashes, and rebuilding; scripts can't install anything.

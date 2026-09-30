@@ -8,10 +8,19 @@
 # Settings: engine/.env for the engine (copy engine/.env.example), and
 # engine/runner.env for the runner (copy engine/runner.env.example).
 #
+# The node worker runs the app's own node kinds (engine/davy_jones_locker/nodes.py):
+# start it with --profile nodes once the app has some. An app builds its own
+# worker image on the framework's (engine/nodeworker/Dockerfile), adding its
+# nodes.py and handlers.
+#
 # Networks:
 #   default  the app network: the app reaches the engine here
 #   sandbox  the engine and the runner only, with no way out (internal)
+#   nodes    the engine and the node worker only, with no way out (internal)
 #   shared   Postgres, from engine-shared (below) or your own
+#
+# The engine refuses every request from the runner and the node worker (it
+# looks their addresses up by name), so code running there can't use it.
 
 # engine-shared: Postgres (later identity, blob storage, a scheduler), as its
 # own project on the `shared` network. Optional: use your own services instead,
@@ -27,12 +36,14 @@ services:
         required: false
     environment:
       RUNNER_URL: http://runner:3000
+      NODE_WORKER_URL: http://node-worker:3000
       PUBLIC_HOST: engine
     ports:
       - "9001:3000"
     networks:
       - default
       - sandbox
+      - nodes
       # - shared
     depends_on:
       - runner
@@ -72,8 +83,42 @@ services:
     cpus: 2
     restart: unless-stopped
 
+  # Runs the app's own node kinds (its handlers are trusted code, but they
+  # parse what users send). It holds no credentials and can reach nothing but
+  # the engine; read-only, unprivileged and capability-free, like the runner.
+  # Replace the build with the app's own image, FROM this one.
+  node-worker:
+    profiles: [nodes]
+    build:
+      context: ./engine
+      dockerfile: nodeworker/Dockerfile
+    # Its own settings file, not .env: nothing with credentials may reach it.
+    env_file:
+      - path: ./engine/node-worker.env
+        required: false
+    environment:
+      NODE_SCRATCH: /tmp
+      # NODE_KINDS: nodes:KINDS    # the app's list, in its image
+    networks:
+      - nodes
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=1g,mode=1777
+    user: "65534:65534"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 4g
+    cpus: 2
+    restart: unless-stopped
+
 networks:
   sandbox:
+    internal: true
+  nodes:
     internal: true
   # shared:
   #   external: true

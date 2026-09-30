@@ -216,9 +216,9 @@ const ids = {
       </div>
     </template>
     <p v-else-if="kind.unknown" class="flow-field-note is-warning">
-      This node is a {{ node.data.kind }} node, which this app doesn't have (it was made in another app, or
-      with a plugin this app doesn't install). It can't run or take new wires here, but it keeps its settings
-      and wires, and saving the graph keeps it as it was.
+      This node is a {{ node.data.kind }} node, which isn't available here: it was made in another app, or
+      with a plugin this app doesn't install, or its kind comes from a server that isn't connected. It can't run
+      or take new wires here, but it keeps its settings and wires, and saving the graph keeps it as it was.
     </p>
     <p v-else class="flow-field-hint">No editable properties yet for this node kind.</p>
   </div>

@@ -239,7 +239,7 @@ function Re(e) {
 			let i = o.get(e), a = r?.id === e ? r : { page: 0 };
 			try {
 				let n = l(t, o, d);
-				await v(n), p[e] = await u(i, n, a, f);
+				await y(n), p[e] = await u(i, n, a, f);
 			} catch (t) {
 				p[e] = { error: Ie(t) };
 			}
@@ -327,51 +327,128 @@ function Re(e) {
 		return i;
 	}
 	async function u(t, n, r, i) {
-		if (!Z(t.kind)) return { error: `This app doesn't have ${t.kind} nodes, so this one can't run here. It's kept as it was, and saving the graph keeps it.` };
-		let { run: a, label: o } = Y[t.kind];
-		if (!a) return { error: `${o} nodes can't run yet.` };
+		if (!Z(t.kind)) return { error: `No ${t.kind} nodes are available here (they come from another app, a plugin this app doesn't install, or a server that isn't connected), so this one can't run. It's kept as it was, and saving the graph keeps it.` };
+		let a = Y[t.kind], o = a.run ?? (a.where === "server" ? (e) => d(e, a) : null);
+		if (!o) return { error: `${a.label} nodes can't run yet.` };
 		let s = Vt(t).filter((e) => e.severity === "error");
 		if (s.length) return { error: s.map((e) => `${e.label}: ${e.message}`).join(" ") };
-		let c = d(It(t), n, i), { table: l, tables: u, slots: f, error: p, ...m } = await a(c) ?? {};
-		if (p) return {
-			error: p,
-			...m.output === void 0 ? {} : { output: m.output }
+		let c = f(It(t), n, i), { table: l, tables: u, slots: p, error: m, ...h } = await o(c) ?? {};
+		if (m) return {
+			error: m,
+			...h.output === void 0 ? {} : { output: h.output }
 		};
-		let h = async (t) => (await e.query(`CREATE TABLE ${t} AS SELECT NULL::VARCHAR AS value WHERE false`), { table: t }), g = u ? { tables: u } : l ? { table: l } : await h(c.table()), _ = $t(t.id, t).slice(1), v = {};
-		for (let e of _) {
-			let t = f?.[e.name];
-			v[e.name] = typeof t == "string" ? { table: t } : t?.tables ? { tables: t.tables } : await h(c.slotTable(e.name));
+		let g = async (t) => (await e.query(`CREATE TABLE ${t} AS SELECT NULL::VARCHAR AS value WHERE false`), { table: t }), _ = u ? { tables: u } : l ? { table: l } : await g(c.table()), v = $t(t.id, t).slice(1), y = {};
+		for (let e of v) {
+			let t = p?.[e.name];
+			y[e.name] = typeof t == "string" ? { table: t } : t?.tables ? { tables: t.tables } : await g(c.slotTable(e.name));
 		}
 		if (i.outputs.set(t.id, {
-			...g,
-			..._.length ? { slots: v } : {}
-		}), m.export) return m;
-		let b = async (e, t) => {
+			..._,
+			...v.length ? { slots: y } : {}
+		}), h.export) return h;
+		let x = async (e, t) => {
 			let n = (e) => (r.slot ?? null) === t && (r.table ?? null) === e ? r.page ?? 0 : 0;
-			if (e.table) return { data: await y(e.table, n(null)) };
+			if (e.table) return { data: await b(e.table, n(null)) };
 			let i = [];
 			for (let t of e.tables) i.push({
 				name: t.name,
 				label: t.label,
-				data: await y(t.table, n(t.name))
+				data: await b(t.table, n(t.name))
 			});
 			return { tables: i };
-		}, x = {
-			...m,
-			...u || l ? await b(g, null) : {}
+		}, S = {
+			...h,
+			...u || l ? await x(_, null) : {}
 		};
-		if (_.length) {
-			x.slots = [];
-			for (let e of _) x.slots.push({
+		if (v.length) {
+			S.slots = [];
+			for (let e of v) S.slots.push({
 				name: e.name,
 				label: e.label,
 				ref: e.ref,
-				...await b(v[e.name], e.name)
+				...await x(y[e.name], e.name)
 			});
 		}
-		return x;
+		return S;
 	}
-	function d(t, n, { getFile: r, server: i }) {
+	async function d(e, { kind: t, label: n, fields: r = [] }) {
+		if (e.server.state !== "connected" || typeof e.server.runNode != "function") return { error: `${n} nodes run on the server, which isn't available.` };
+		let i = [];
+		for (let t of e.inputs) {
+			let { ref: e, id: n, slot: r, pin: a } = t;
+			if (t.table) i.push({
+				ref: e,
+				id: n,
+				slot: r,
+				pin: a,
+				bytes: await h(t.table)
+			});
+			else {
+				let o = [];
+				for (let e of t.tables) o.push({
+					name: e.name,
+					bytes: await h(e.table)
+				});
+				i.push({
+					ref: e,
+					id: n,
+					slot: r,
+					pin: a,
+					tables: o
+				});
+			}
+		}
+		let a = [];
+		for (let t of r) {
+			let n = t.type === "file" ? e.node[t.key] : null;
+			if (!n?.key) continue;
+			let r = await e.getFile(n.key);
+			if (!r) return { error: `${t.label}: "${n.fileName}" isn't kept any more. Choose it again.` };
+			a.push({
+				key: n.key,
+				bytes: r
+			});
+		}
+		let o = await e.server.runNode({
+			kind: t,
+			node: e.node,
+			inputs: i,
+			files: a
+		}), s = o.output ?? "";
+		if (o.error) return {
+			error: o.error,
+			output: s
+		};
+		let c = {
+			output: s,
+			slots: {}
+		}, l = async (t, n, r) => {
+			let i = n === null ? e.table(r) : e.slotTable(n, r);
+			return await g(i, t), i;
+		};
+		for (let e of o.outputs ?? []) {
+			let t;
+			if (e.tables) {
+				t = { tables: [] };
+				for (let n of e.tables) t.tables.push({
+					name: n.name,
+					label: n.name,
+					table: await l(n.bytes, e.slot, n.name)
+				});
+			} else t = await l(e.bytes, e.slot);
+			e.slot === null ? e.tables ? c.tables = t.tables : c.table = t : c.slots[e.slot] = t;
+		}
+		if (o.value !== void 0 && !c.table && !c.tables) {
+			let e = o.value;
+			c.value = {
+				kind: "json",
+				type: Array.isArray(e) ? "array" : e === null ? "null" : typeof e,
+				value: e
+			};
+		}
+		return c;
+	}
+	function f(t, n, { getFile: r, server: i }) {
 		return {
 			id: t.id,
 			node: t,
@@ -381,14 +458,14 @@ function Re(e) {
 			getFile: r,
 			table: (e) => `${Me}.${K(e ? `${t.id}/${e}` : t.id)}`,
 			slotTable: (e, n) => `${Me}.${K(n ? `${t.id}#${e}/${n}` : `${t.id}#${e}`)}`,
-			rows: _,
-			parquet: () => p(n),
-			loadParquet: h,
-			loadRows: g,
-			serverTables: (e) => f(e, [...new Set(n.map((e) => e.ref))])
+			rows: v,
+			parquet: () => m(n),
+			loadParquet: g,
+			loadRows: _,
+			serverTables: (e) => p(e, [...new Set(n.map((e) => e.ref))])
 		};
 	}
-	async function f(t, n) {
+	async function p(t, n) {
 		let r = t.trim().replace(/;+\s*$/, "");
 		if (!r || !e) return [];
 		let i;
@@ -410,21 +487,21 @@ function Re(e) {
 		].filter(Boolean).join("."));
 		return [...new Set(u)];
 	}
-	async function p(e) {
+	async function m(e) {
 		let t = [], n = /* @__PURE__ */ new Set();
 		for (let r of e) if (!n.has(r.ref)) {
 			if (n.add(r.ref), r.table) t.push({
 				name: r.ref,
-				bytes: await m(r.table)
+				bytes: await h(r.table)
 			});
 			else for (let e of r.tables) t.push({
 				name: `${r.ref}.${e.name}`,
-				bytes: await m(e.table)
+				bytes: await h(e.table)
 			});
 		}
 		return t;
 	}
-	async function m(t) {
+	async function h(t) {
 		let n = `flow-send-${Date.now()}-${Math.random().toString(36).slice(2)}.parquet`;
 		await be(e, `SELECT * FROM ${t}`, n, "FORMAT parquet");
 		try {
@@ -433,7 +510,7 @@ function Re(e) {
 			await e.dropFile(n);
 		}
 	}
-	async function h(t, n) {
+	async function g(t, n) {
 		let r = `flow-received-${Date.now()}-${Math.random().toString(36).slice(2)}.parquet`;
 		await e.registerFile(r, n);
 		try {
@@ -442,7 +519,7 @@ function Re(e) {
 			await e.dropFile(r);
 		}
 	}
-	async function g(t, n) {
+	async function _(t, n) {
 		if (!n.length) {
 			await e.query(`CREATE TABLE ${t} AS SELECT NULL::VARCHAR AS value WHERE false`);
 			return;
@@ -455,14 +532,14 @@ function Re(e) {
 			await e.dropFile(r);
 		}
 	}
-	async function _(t) {
+	async function v(t) {
 		let n = async (t) => {
 			let { columns: n, rows: r } = await e.query(`SELECT * FROM ${t}`);
 			return r.map((e) => Object.fromEntries(n.map((t, n) => [t, e[n]])));
 		};
 		return t.table ? n(t.table) : Object.fromEntries(await Promise.all(t.tables.map(async (e) => [e.name, await n(e.table)])));
 	}
-	async function v(t) {
+	async function y(t) {
 		for (let t of [Ne, ...n]) await e.query(`DROP SCHEMA IF EXISTS ${K(t)} CASCADE`);
 		n = [], await e.query(`CREATE SCHEMA ${Ne}`), await e.query(`SET search_path = '${Ne},main'`);
 		let r = /* @__PURE__ */ new Set();
@@ -478,7 +555,7 @@ function Re(e) {
 			}
 		}
 	}
-	async function y(t, n) {
+	async function b(t, n) {
 		let r = Number((await e.query(`SELECT count(*) FROM ${t}`)).rows[0][0]), { columns: i, rows: a } = await e.query(`SELECT * FROM ${t} LIMIT 100 OFFSET ${n * 100}`);
 		return {
 			columns: i,
@@ -489,13 +566,13 @@ function Re(e) {
 			hasMore: (n + 1) * 100 < r
 		};
 	}
-	let b = (e, t, n) => r(() => x(e, t, n));
-	async function x(t, n, r) {
+	let x = (e, t, n) => r(() => S(e, t, n));
+	async function S(t, n, r) {
 		if (!e) throw Error("No SQL engine is connected, so files can't be read.");
 		let i = `flow-upload-${Date.now()}.${G[r].extensions[0]}`, a = [];
 		await e.registerFile(i, t);
 		try {
-			let o = await S(r, i, t, n, a), s = [], c = [];
+			let o = await C(r, i, t, n, a), s = [], c = [];
 			for (let [t, { label: n, select: r }] of o.entries()) {
 				let o = Kt(Jt(n) || "table", c);
 				c.push(o);
@@ -514,7 +591,7 @@ function Re(e) {
 			for (let t of [i, ...a]) await e.dropFile(t);
 		}
 	}
-	async function S(t, n, r, i, a) {
+	async function C(t, n, r, i, a) {
 		let o = ye(n), s = (e) => [{
 			label: i.replace(/\.[^.]*$/, ""),
 			select: e
@@ -534,22 +611,22 @@ function Re(e) {
 				let t = await e.readSqlite(r), i = [];
 				for (let [e, r] of t.entries()) i.push({
 					label: r.name,
-					select: await C(r, `${n}-rows-${e}.json`, a)
+					select: await w(r, `${n}-rows-${e}.json`, a)
 				});
 				return i;
 			}
 			default: throw Error(`Can't read ${G[t]?.label ?? t} files.`);
 		}
 	}
-	async function C({ columns: t, rows: n }, r, i) {
+	async function w({ columns: t, rows: n }, r, i) {
 		if (!n.length) return `SELECT ${t.map((e) => `NULL::VARCHAR AS ${K(e)}`).join(", ") || "NULL AS empty"} WHERE false`;
 		let a = n.map((e) => Object.fromEntries(t.map((t, n) => [t, e[n]])));
 		return await e.registerFile(r, new TextEncoder().encode(JSON.stringify(a))), i.push(r), `SELECT * FROM read_json_auto(${ye(r)}, format = 'array')`;
 	}
 	return {
 		run: i,
-		readFile: b,
-		serverTables: f,
+		readFile: x,
+		serverTables: p,
 		describeInputs: o
 	};
 }
@@ -670,7 +747,7 @@ function Ye({ sql: e = null, files: t = null, server: r = null } = {}) {
 			status: {},
 			results: {}
 		}), m.nodes = {}, i.setNodes(t), i.setEdges(n.map(b));
-		for (let e of t) e.data.kind === "sql-query" && e.data.sqlQuery && !e.data.sqlServerTables && M(e.id);
+		for (let e of t) e.data.kind === "sql-query" && e.data.sqlQuery && M(e.id);
 		if (r) i.setViewport(r);
 		else if (t.length) {
 			let { off: e } = i.onNodesInitialized(() => {
@@ -740,6 +817,9 @@ function Ye({ sql: e = null, files: t = null, server: r = null } = {}) {
 		let s = n.data.sqlServerTables;
 		(!s || o.join("\n") !== s.join("\n")) && i.updateNodeData(t, { sqlServerTables: o });
 	}
+	P(() => Object.keys(Y).length, () => {
+		for (let e of i.nodes.value) e.data.kind === "sql-query" && e.data.sqlQuery && M(e.id);
+	});
 	function N(e) {
 		delete l.status[e], delete l.results[e], d.set(e, (d.get(e) ?? 0) + 1), j(e, { self: !1 });
 	}
@@ -914,7 +994,8 @@ function Ye({ sql: e = null, files: t = null, server: r = null } = {}) {
 	let se = () => ({
 		state: o.value.state,
 		query: r?.query,
-		runPython: r?.runPython
+		runPython: r?.runPython,
+		runNode: r?.runNode
 	});
 	async function ce(e, t = null, { log: n = !0 } = {}) {
 		if (!e.length) return {};
@@ -1449,7 +1530,7 @@ function X(e) {
 	let i = e.idPrefix ?? Jt(n).replaceAll("_", "");
 	if (!/^[a-z][a-z0-9]*$/.test(i)) throw Error(`Node kind ${t} needs an idPrefix of lowercase letters and digits (its label doesn't make one).`);
 	Y[t] = Object.freeze(v({
-		runs: typeof e.run == "function",
+		runs: typeof e.run == "function" || e.where === "server",
 		...e,
 		fields: (e.fields ?? []).map((e) => Object.freeze(v({ ...e }))),
 		idPrefix: i
@@ -1500,7 +1581,7 @@ function Vt(e) {
 	let t = It(e);
 	return (Q(e.kind).fields ?? []).filter((e) => e.key && (!e.visible || e.visible(t))).flatMap((e) => Bt(e, t[e.key], t)).sort((e, t) => e.severity === t.severity ? 0 : e.severity === "error" ? -1 : 1);
 }
-var Ht = "application/x-flow-node-kind", Ut = (e) => Object.keys(Y).filter((t) => Y[t].category === e), Z = (e) => typeof e == "string" && Object.hasOwn(Y, e), Q = (e) => Z(e) ? Y[e] : {
+var Ht = "application/x-flow-node-kind", Ut = (e) => Object.keys(Y).filter((t) => Y[t].category === e), Z = (e) => typeof e == "string" && e in Y && Object.hasOwn(Y, e), Q = (e) => Z(e) ? Y[e] : {
 	label: String(e),
 	category: "unknown",
 	unknown: !0
@@ -2995,7 +3076,7 @@ var un = {
 					title: "Back to not run: clears its status and output",
 					onClick: u[9] ||= (t) => M(n).resetNode(e.node.id)
 				}, " Reset ")) : f("", !0)]), m("p", ei, j(re.value ?? ie.value), 1)])
-			], 64)) : r.value.unknown ? (w(), p("p", ti, " This node is a " + j(e.node.data.kind) + " node, which this app doesn't have (it was made in another app, or with a plugin this app doesn't install). It can't run or take new wires here, but it keeps its settings and wires, and saving the graph keeps it as it was. ", 1)) : (w(), p("p", ni, "No editable properties yet for this node kind."))
+			], 64)) : r.value.unknown ? (w(), p("p", ti, " This node is a " + j(e.node.data.kind) + " node, which isn't available here: it was made in another app, or with a plugin this app doesn't install, or its kind comes from a server that isn't connected. It can't run or take new wires here, but it keeps its settings and wires, and saving the graph keeps it as it was. ", 1)) : (w(), p("p", ni, "No editable properties yet for this node kind."))
 		]));
 	}
 }, ii = {

@@ -1,0 +1,8 @@
+# The node worker (davy_jones_locker/nodeworker/): its server, and pyarrow,
+# which it and handlers exchange tables in. An app adds the libraries its
+# handlers need in its own image, built FROM this one. Compile to
+# requirements.txt (pinned, with hashes):
+#   uv pip compile nodeworker/requirements.in --generate-hashes --python-version 3.12 --python-platform linux -o nodeworker/requirements.txt
+fastapi==0.141.1
+uvicorn==0.53.0
+pyarrow==25.0.1

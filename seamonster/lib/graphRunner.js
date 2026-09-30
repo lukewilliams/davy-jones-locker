@@ -216,10 +216,16 @@ export function createGraphRunner(sql) {
   // preview it for the Data panel.
   async function runNode(node, inputs, page, context) {
     if (!isKnownKind(node.kind)) {
-      return { error: `This app doesn't have ${node.kind} nodes, so this one can't run here. It's kept as it was, and saving the graph keeps it.` }
+      return {
+        error: `No ${node.kind} nodes are available here (they come from another app, a plugin this app doesn't ` +
+          "install, or a server that isn't connected), so this one can't run. It's kept as it was, and saving the graph keeps it.",
+      }
     }
-    const { run, label } = NODE_KINDS[node.kind]
-    if (!run) return { error: `${label} nodes can't run yet.` }
+    const definition = NODE_KINDS[node.kind]
+    // A kind the server runs (the engine's own, defined from GET /nodes) has
+    // no `run`: it runs through the server client's runNode.
+    const run = definition.run ?? (definition.where === 'server' ? (ctx) => runOnServer(ctx, definition) : null)
+    if (!run) return { error: `${definition.label} nodes can't run yet.` }
     const errors = checkNode(node).filter((p) => p.severity === 'error')
     if (errors.length) return { error: errors.map((p) => `${p.label}: ${p.message}`).join(' ') }
     const ctx = runContext(withDefaults(node), inputs, context)
@@ -258,6 +264,61 @@ export function createGraphRunner(sql) {
       for (const slot of others) result.slots.push({ name: slot.name, label: slot.label, ref: slot.ref, ...(await show(slots[slot.name], slot.name)) })
     }
     return result
+  }
+
+  // A node of a kind the server runs, with no `run` of its own: its inputs and
+  // its file fields' files sent to the server's runNode (see davy-jones-locker's
+  // engine client), and what comes back loaded as its tables and slots.
+  async function runOnServer(ctx, { kind, label, fields = [] }) {
+    if (ctx.server.state !== 'connected' || typeof ctx.server.runNode !== 'function') {
+      return { error: `${label} nodes run on the server, which isn't available.` }
+    }
+    const inputs = []
+    for (const input of ctx.inputs) {
+      const { ref, id, slot, pin } = input
+      if (input.table) inputs.push({ ref, id, slot, pin, bytes: await parquetOf(input.table) })
+      else {
+        const tables = []
+        for (const t of input.tables) tables.push({ name: t.name, bytes: await parquetOf(t.table) })
+        inputs.push({ ref, id, slot, pin, tables })
+      }
+    }
+    const files = []
+    for (const field of fields) {
+      const stored = field.type === 'file' ? ctx.node[field.key] : null
+      if (!stored?.key) continue
+      const bytes = await ctx.getFile(stored.key)
+      if (!bytes) return { error: `${field.label}: "${stored.fileName}" isn't kept any more. Choose it again.` }
+      files.push({ key: stored.key, bytes })
+    }
+
+    const result = await ctx.server.runNode({ kind, node: ctx.node, inputs, files })
+    const output = result.output ?? ''
+    if (result.error) return { error: result.error, output }
+    const made = { output, slots: {} }
+    const load = async (bytes, slot, name) => {
+      const table = slot === null ? ctx.table(name) : ctx.slotTable(slot, name)
+      await loadParquet(table, bytes)
+      return table
+    }
+    for (const o of result.outputs ?? []) {
+      let value
+      if (o.tables) {
+        value = { tables: [] }
+        for (const t of o.tables) value.tables.push({ name: t.name, label: t.name, table: await load(t.bytes, o.slot, t.name) })
+      } else {
+        value = await load(o.bytes, o.slot)
+      }
+      if (o.slot !== null) made.slots[o.slot] = value
+      else if (o.tables) made.tables = value.tables
+      else made.table = value
+    }
+    // A value shows in Data only when there's no table to show.
+    if (result.value !== undefined && !made.table && !made.tables) {
+      const v = result.value
+      made.value = { kind: 'json', type: Array.isArray(v) ? 'array' : v === null ? 'null' : typeof v, value: v }
+    }
+    return made
   }
 
   // What a kind's run is given: see the top of this file.

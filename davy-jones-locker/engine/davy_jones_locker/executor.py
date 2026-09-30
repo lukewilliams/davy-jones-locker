@@ -9,8 +9,15 @@ What runs here:
   python-script  in the runner (sandbox/)
   data-ingest    from the tables it stored by key (PUT /files/{key})
   data-export    to CSV, TSV, JSON or Parquet, returned in the result (base64)
+  the app's own  in the node worker (noderunner.py), its file fields' files
+                 from the stored files too
   javascript     refused: browser only, until the engine has safeguards for it
   anything else  can't run on the server yet
+
+Slots and pins as SEAMONSTER has them (its kindRegistry.js): a node's first
+output is read by its reference name, its kind's other slots as <id>_<slot>;
+a wire from the main pin (source-0) carries all of them, one from a slot's own
+pin (source:<slot>) just that slot.
 """
 
 import base64
@@ -22,7 +29,7 @@ import pyarrow as pa
 import pyarrow.csv as pacsv
 import pyarrow.parquet as pq
 
-from . import database, runner, sql
+from . import database, noderunner, runner, sql
 from .sql import QueryError
 
 
@@ -53,16 +60,14 @@ def reference_name(node: dict) -> str:
     return f"{node['id']}_{node.get('outputSuffix') or 'data'}"
 
 
-def upstream_order(doc: dict, targets: list[str]) -> tuple[list[str], dict[str, list[str]]]:
+def upstream_order(doc: dict, targets: list[str]) -> tuple[list[str], dict[str, list[dict]]]:
     """The targets and everything upstream, each after its inputs; and each
-    node's inputs (source IDs, once each)."""
+    node's wires in (the edges, in order)."""
     ids = {n["id"] for n in doc.get("nodes", [])}
-    inputs: dict[str, list[str]] = {}
+    inputs: dict[str, list[dict]] = {}
     for edge in doc.get("edges", []):
         if edge.get("source") in ids and edge.get("target") in ids:
-            sources = inputs.setdefault(edge["target"], [])
-            if edge["source"] not in sources:
-                sources.append(edge["source"])
+            inputs.setdefault(edge["target"], []).append(edge)
     order: list[str] = []
     seen: set[str] = set()
 
@@ -70,8 +75,8 @@ def upstream_order(doc: dict, targets: list[str]) -> tuple[list[str], dict[str, 
         if node_id in seen:
             return
         seen.add(node_id)
-        for source in inputs.get(node_id, []):
-            visit(source)
+        for edge in inputs.get(node_id, []):
+            visit(edge["source"])
         order.append(node_id)
 
     for target in targets:
@@ -92,43 +97,73 @@ def execute(doc: dict, targets: list[str] | None = None) -> dict[str, dict]:
     order, inputs = upstream_order(doc, targets)
 
     results: dict[str, dict] = {}
-    outputs: dict[str, str | dict[str, str]] = {}
+    # Per node that ran, its tables by slot (None: its first): a table's
+    # name, or { table name: table } for several.
+    outputs: dict[str, dict[str | None, str | dict[str, str]]] = {}
     with sql.Session() as session:
         for node_id in order:
-            sources = inputs.get(node_id, [])
-            failed = next((s for s in sources if results[s]["status"] == "failed"), None)
+            wires = inputs.get(node_id, [])
+            failed = next((w["source"] for w in wires if results[w["source"]]["status"] == "failed"), None)
             if failed:
                 results[node_id] = {"status": "failed", "error": f"Upstream node {failed} failed."}
                 continue
             try:
-                result = run_node(session, nodes[node_id], [nodes[s] for s in sources], outputs)
+                result = run_node(session, nodes[node_id], wired(wires, nodes, outputs), outputs)
                 results[node_id] = {"status": "completed", **result}
             except NodeError as e:
                 results[node_id] = {"status": "failed", "error": str(e), **({"output": e.output} if e.output else {})}
-            except (QueryError, runner.RunnerUnavailable, database.NoDatabase) as e:
+            except (QueryError, runner.RunnerUnavailable, noderunner.WorkerUnavailable, database.NoDatabase) as e:
                 results[node_id] = {"status": "failed", "error": str(e)}
             except Exception as e:  # anything unexpected fails the node, not the run
                 results[node_id] = {"status": "failed", "error": f"{type(e).__name__}: {e}"}
     return results
 
 
-def exposed_inputs(sources: list[dict], outputs: dict) -> dict:
-    return {reference_name(s): outputs[s["id"]] for s in sources}
+def slot_names(node: dict) -> list[str]:
+    """A node's slots beyond the first: its kind's, if it's one of the app's."""
+    kind = noderunner.KINDS.get(node.get("kind"))
+    return kind.slot_names(node) if kind else []
 
 
-def run_node(session: sql.Session, node: dict, sources: list[dict], outputs: dict) -> dict:
+def wired(wires: list[dict], nodes: dict[str, dict], outputs: dict) -> list[dict]:
+    """What a node's wires bring it: one input per slot each wire carries,
+    { id, ref, slot, pin, output } (output: a table's name, or { table name:
+    table }), each once per slot and pin."""
+    found, seen = [], set()
+    for wire in wires:
+        source = nodes[wire["source"]]
+        handle = wire.get("sourceHandle") or "source-0"
+        target_handle = wire.get("targetHandle") or ""
+        pin = target_handle.removeprefix("target:") if target_handle.startswith("target:") else None
+        slots = [None, *slot_names(source)]
+        if handle.startswith("source:"):
+            slots = [s for s in slots if s == handle.removeprefix("source:")]
+        for slot in slots:
+            if (source["id"], slot, pin) in seen or slot not in outputs.get(source["id"], {}):
+                continue
+            seen.add((source["id"], slot, pin))
+            ref = reference_name(source) if slot is None else f"{source['id']}_{slot}"
+            found.append({"id": source["id"], "ref": ref, "slot": slot, "pin": pin, "output": outputs[source["id"]][slot]})
+    return found
+
+
+def exposed(inputs: list[dict]) -> dict:
+    return {i["ref"]: i["output"] for i in inputs}
+
+
+def run_node(session: sql.Session, node: dict, inputs: list[dict], outputs: dict) -> dict:
     kind = node.get("kind")
     node_id = node["id"]
 
     if kind == "sql-query":
-        session.expose(exposed_inputs(sources, outputs))
+        session.expose(exposed(inputs))
         target = session.output_table(node_id)
         session.run_query(node.get("sqlQuery") or "", target)
-        outputs[node_id] = target
+        outputs[node_id] = {None: target}
         return {"rowCount": session.row_count(target)}
 
     if kind == "python-script":
-        return run_python(session, node, sources, outputs)
+        return run_python(session, node, inputs, outputs)
 
     if kind == "data-ingest":
         ingest = node.get("ingest")
@@ -144,31 +179,87 @@ def run_node(session: sql.Session, node: dict, sources: list[dict], outputs: dic
             tables[stored["name"]] = target
         if not tables:
             raise NodeError("This node's file had no tables.")
-        outputs[node_id] = tables if ingest.get("format") in MULTI_TABLE_FORMATS else next(iter(tables.values()))
+        first = tables if ingest.get("format") in MULTI_TABLE_FORMATS else next(iter(tables.values()))
+        outputs[node_id] = {None: first}
         return {"rowCount": sum(session.row_count(t) for t in tables.values())}
 
     if kind == "data-export":
-        return run_export(session, node, sources, outputs)
+        return run_export(session, node, inputs, outputs)
 
     if kind == "javascript":
         raise NodeError("JavaScript nodes run only in the browser: the engine won't run them until it has safeguards for them.")
 
+    if kind in noderunner.KINDS:
+        return run_app_kind(session, noderunner.KINDS[kind], node, inputs, outputs)
+
     raise NodeError(f"{kind} nodes can't run on the server yet.")
 
 
-def run_python(session: sql.Session, node: dict, sources: list[dict], outputs: dict) -> dict:
+def run_app_kind(session: sql.Session, kind, node: dict, inputs: list[dict], outputs: dict) -> dict:
+    """A node of one of the app's kinds, by the node worker: its inputs sent
+    as Parquet, its file fields' files from the stored files, and what it
+    made loaded back as its slots' tables (an empty table for any it left out)."""
+    problems = kind.errors(node)
+    if problems:
+        raise NodeError(" ".join(problems))
+    values = kind.with_defaults(node)
+    sent = []
+    for i in inputs:
+        item = {k: i[k] for k in ("ref", "id", "slot", "pin")}
+        if isinstance(i["output"], str):
+            item["table"] = sql.to_parquet(session.arrow(i["output"]))
+        else:
+            item["tables"] = {name: sql.to_parquet(session.arrow(t)) for name, t in i["output"].items()}
+        sent.append(item)
+    files = {}
+    for field in kind.fields:
+        stored = values.get(field.key) if field.type == "file" else None
+        if isinstance(stored, dict) and stored.get("key"):
+            data = database.get_file(stored["key"])
+            if data is None:
+                raise NodeError(f"{field.label}: \"{stored.get('fileName')}\" isn't stored on the server.")
+            files[stored["key"]] = data
+
+    result = noderunner.run(kind, values, sent, files)
+    if result.get("error"):
+        raise NodeError(result["error"], result.get("output", ""))
+    made: dict[str | None, str | dict[str, str]] = {}
+    for output in result["outputs"]:
+        slot = output["slot"]
+        base = node["id"] if slot is None else f"{node['id']}#{slot}"
+        if "tables" in output:
+            made[slot] = {}
+            for name, data in output["tables"].items():
+                target = session.output_table(base, name)
+                session.load(target, sql.from_parquet(data))
+                made[slot][name] = target
+        else:
+            target = session.output_table(base)
+            session.load(target, sql.from_parquet(output["table"]))
+            made[slot] = target
+    for slot in [None, *kind.slot_names(node)]:
+        if slot not in made:
+            target = session.output_table(node["id"] if slot is None else f"{node['id']}#{slot}")
+            session.con.execute(f"CREATE TABLE {target} AS SELECT NULL::VARCHAR AS value WHERE false")
+            made[slot] = target
+    outputs[node["id"]] = made
+    first = made[None]
+    rows = session.row_count(first) if isinstance(first, str) else sum(session.row_count(t) for t in first.values())
+    return {"rowCount": rows, "output": result.get("output", ""), **({"value": result["value"]} if "value" in result else {})}
+
+
+def run_python(session: sql.Session, node: dict, inputs: list[dict], outputs: dict) -> dict:
     code = node.get("pythonCode") or ""
     if not code.strip():
         raise NodeError("Write some code first.")
     payload: dict[str, bytes] = {}
-    for source in sources:
-        name = reference_name(source)
-        output = outputs[source["id"]]
+    for i in inputs:
+        output = i["output"]
         if isinstance(output, str):
-            payload[name] = sql.to_parquet(session.arrow(output))
+            payload[i["ref"]] = sql.to_parquet(session.arrow(output))
         else:
             for table_name, table in output.items():
-                payload[f"{name}.{table_name}"] = sql.to_parquet(session.arrow(table))
+                payload[f"{i['ref']}.{table_name}"] = sql.to_parquet(session.arrow(table))
 
     result = runner.run(code, payload)
     if result.get("error"):
@@ -178,7 +269,7 @@ def run_python(session: sql.Session, node: dict, sources: list[dict], outputs: d
         session.load(target, sql.from_parquet(result["table"]))
     else:
         session.con.execute(f"CREATE TABLE {target} AS SELECT NULL::VARCHAR AS value WHERE false")
-    outputs[node["id"]] = target
+    outputs[node["id"]] = {None: target}
     return {
         "rowCount": session.row_count(target),
         "output": result.get("output", ""),
@@ -192,8 +283,8 @@ def format_from_name(name: str) -> str | None:
     return EXTENSIONS.get(match.group(1).lower()) if match else None
 
 
-def run_export(session: sql.Session, node: dict, sources: list[dict], outputs: dict) -> dict:
-    source, table = pick_export_input(node, sources, outputs)
+def run_export(session: sql.Session, node: dict, inputs: list[dict], outputs: dict) -> dict:
+    source, table = pick_export_input(node, inputs)
     typed = (node.get("exportFilename") or "").strip() or "export"
     fmt = node.get("exportFormat") or format_from_name(typed) or "csv"
     if fmt not in WRITERS:
@@ -201,7 +292,7 @@ def run_export(session: sql.Session, node: dict, sources: list[dict], outputs: d
     content_type, extension = WRITERS[fmt]
     filename = typed if format_from_name(typed) == fmt else f"{typed}.{extension}"
     data = write(fmt, session.arrow(table))
-    outputs[node["id"]] = table
+    outputs[node["id"]] = {None: table}
     return {
         "rowCount": session.row_count(table),
         "export": {
@@ -213,21 +304,21 @@ def run_export(session: sql.Session, node: dict, sources: list[dict], outputs: d
     }
 
 
-def pick_export_input(node: dict, sources: list[dict], outputs: dict) -> tuple[dict, str]:
+def pick_export_input(node: dict, inputs: list[dict]) -> tuple[dict, str]:
     """The input a DataExport node writes: its only one, or the one
     `exportInput` names (reference name or ID; <name>.<table> for one table
     of several)."""
-    if not sources:
+    if not inputs:
         raise NodeError("Wire a node into this one to export its data.")
-    names = [reference_name(s) for s in sources]
+    names = [i["ref"] for i in inputs]
     choice = (node.get("exportInput") or "").strip()
     if not choice:
-        if len(sources) > 1:
-            raise NodeError(f"{len(sources)} nodes are wired in ({', '.join(names)}). Name the one to write under Input.")
-        source, table_name = sources[0], None
+        if len(inputs) > 1:
+            raise NodeError(f"{len(inputs)} inputs are wired in ({', '.join(names)}). Name the one to write under Input.")
+        source, table_name = inputs[0], None
     else:
         def by_name(name: str) -> dict | None:
-            return next((s for s, n in zip(sources, names) if n == name or s["id"] == name), None)
+            return next((i for i in inputs if i["ref"] == name or i["id"] == name), None)
 
         source, table_name = by_name(choice), None
         if source is None and "." in choice:
@@ -236,7 +327,7 @@ def pick_export_input(node: dict, sources: list[dict], outputs: dict) -> tuple[d
         if source is None:
             raise NodeError(f"No input called \"{choice}\" is wired in. Wired in: {', '.join(names)}.")
 
-    output = outputs[source["id"]]
+    output = source["output"]
     if isinstance(output, str):
         if table_name:
             raise NodeError(f"{source['id']} has no table called \"{table_name}\": it has one table.")
@@ -245,7 +336,7 @@ def pick_export_input(node: dict, sources: list[dict], outputs: dict) -> tuple[d
         if table_name not in output:
             raise NodeError(f"{source['id']} has no table called \"{table_name}\": its tables are {', '.join(output)}.")
         return source, output[table_name]
-    raise NodeError(f"{source['id']} has {len(output)} tables: name one under Input (like {reference_name(source)}.{next(iter(output))}).")
+    raise NodeError(f"{source['id']} has {len(output)} tables: name one under Input (like {source['ref']}.{next(iter(output))}).")
 
 
 def write(fmt: str, table: pa.Table) -> bytes:

@@ -12,15 +12,21 @@ import { reactive } from 'vue'
 //   query      runs SQL on the server, over the query database and the inputs
 //              sent with it; resolves to the result as Parquet
 //   runPython  runs a PythonScript node's code in the server's sandbox
+//   runNode    runs a node of one of the app's own kinds, in the engine's node
+//              worker (SEAMONSTER calls it for a kind whose `where` is 'server'
+//              and that has no `run` of its own)
+//   nodes      the app's own node kinds and categories, as GET /nodes has them
+//              (serverKinds.js defines them in the browser)
 //   assist     the AI assistant: a node's code from a request in plain words
 //
 // Inputs are [{ name, bytes }]: Parquet, named by reference name (or
 // name.table). The engine's README has the API.
 //
 // The engine answers GET /health with JSON { status: 'ok', host?, port?,
-// assistant? }; anything else (an error, no answer within 3 seconds, or the
-// dev server's index.html when there's no engine) means it's unavailable.
-// `assistant` is { model, sampleRows } when it has the AI assistant set up.
+// assistant?, nodes? }; anything else (an error, no answer within 3 seconds, or
+// the dev server's index.html when there's no engine) means it's unavailable.
+// `assistant` is { model, sampleRows } when it has the AI assistant set up, and
+// `nodes` the names of the app's own node kinds (status.nodes follows it).
 
 const CONNECTED_INTERVAL_MS = 5000
 const UNAVAILABLE_INTERVAL_MS = 15000
@@ -61,7 +67,7 @@ export function createEngineClient({ url, name = 'The engine' }) {
   const post = (path, fields, inputs) => send(path, { body: form(fields, inputs) })
 
   const client = {
-    status: reactive({ state: 'checking', address: null, assistant: null }),
+    status: reactive({ state: 'checking', address: null, assistant: null, nodes: [] }),
 
     async query({ sql, inputs = [] }) {
       const response = await post('/query', { sql }, inputs)
@@ -75,6 +81,49 @@ export function createEngineClient({ url, name = 'The engine' }) {
       const result = JSON.parse(parts.get('result'))
       const table = parts.get('table')
       return table ? { ...result, table: new Uint8Array(await table.arrayBuffer()) } : result
+    },
+
+    // { kind, node (its data), inputs: [{ ref, id, slot, pin, bytes } or
+    // { ..., tables: [{ name, bytes }] }], files: [{ key, bytes }] }, the tables
+    // Parquet. Resolves to { output, value?, error?, outputs: [{ slot, bytes }
+    // or { slot, tables: [{ name, bytes }] }] }.
+    async runNode({ kind, node, inputs = [], files = [] }) {
+      const body = new FormData()
+      body.append('kind', kind)
+      body.append('node', JSON.stringify(node))
+      const specs = inputs.map((input, i) => {
+        const { ref, id, slot, pin } = input
+        if (!input.tables) {
+          body.append('input', new Blob([input.bytes], { type: PARQUET }), `i${i}`)
+          return { ref, id, slot, pin, part: `i${i}` }
+        }
+        const tables = input.tables.map((t, j) => {
+          body.append('input', new Blob([t.bytes], { type: PARQUET }), `i${i}-${j}`)
+          return { name: t.name, part: `i${i}-${j}` }
+        })
+        return { ref, id, slot, pin, tables }
+      })
+      body.append('inputs', JSON.stringify(specs))
+      for (const { key, bytes } of files) body.append('file', new Blob([bytes]), key)
+
+      const parts = await (await send('/run/node', { body })).formData()
+      const result = JSON.parse(parts.get('result'))
+      const tables = new Map()
+      for (const file of parts.getAll('table')) tables.set(file.name, new Uint8Array(await file.arrayBuffer()))
+      const outputs = (result.outputs ?? []).map((o) =>
+        o.tables
+          ? { slot: o.slot, tables: o.tables.map((t) => ({ name: t.name, bytes: tables.get(t.part) })) }
+          : { slot: o.slot, bytes: tables.get(o.part) },
+      )
+      return { ...result, outputs }
+    },
+
+    // { categories: [...], kinds: [...] }: definitions SEAMONSTER's
+    // defineNodeCategory and defineNodeKind take.
+    async nodes() {
+      const response = await fetch(`${base}/nodes`, { cache: 'no-store' })
+      if (!response.ok) throw await failure(response)
+      return response.json()
     },
 
     // { kind, request, code, inputs: [described inputs] } -> { code, note, model }
@@ -100,8 +149,9 @@ export function createEngineClient({ url, name = 'The engine' }) {
       if (body?.status !== 'ok') throw new Error('not the engine')
       status.state = 'connected'
       status.address = body.host && body.port ? `${body.host}:${body.port}` : location.host
-      // Replaced only when it changes, not on every check.
+      // Replaced only when they change, not on every check.
       if (JSON.stringify(body.assistant ?? null) !== JSON.stringify(status.assistant)) status.assistant = body.assistant ?? null
+      if (JSON.stringify(body.nodes ?? []) !== JSON.stringify(status.nodes)) status.nodes = body.nodes ?? []
     } catch {
       status.state = 'unavailable'
       status.address = null

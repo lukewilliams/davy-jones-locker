@@ -4,3 +4,4 @@ runner.env
 __pycache__
 *.pyc
 README.md
+node-worker.env

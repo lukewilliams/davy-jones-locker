@@ -191,8 +191,10 @@ by [graphDocument.js](lib/graphDocument.js):
 Loading drops nodes with no ID, kind or position, and wires to nodes that
 aren't there, so stale or hand-edited documents still open. A node of a kind
 this app doesn't have (made in another app, or with a plugin this app doesn't
-install) is kept as a **placeholder**: greyed, labelled with its kind's name,
-saying "Not available here." It has its first pin on each side plus any its
+install, or a kind a server supplies, while it isn't connected) is kept as a
+**placeholder**: greyed, labelled with its kind's name, saying "Not available
+here." Once the kind is defined (the server connects, say), it's a node like
+any other. It has its first pin on each side plus any its
 wires use, and it keeps its settings and wires, so saving the graph here loses
 nothing. It can be moved, renamed or deleted, but not run (running it, or
 anything downstream, fails with a message saying why), and new wires can't be
@@ -202,9 +204,10 @@ localStorage under `<name>:open-graph`.
 
 ## Running nodes
 
-Everything runs in the browser, except PythonScript nodes and SQL that reads
-the backend database, which run on the server engine (DAVY JONES' LOCKER's,
-in the framework). The engine can also run whole graphs, for scheduled runs.
+Everything runs in the browser, except PythonScript nodes, SQL that reads
+the backend database, and the kinds the server supplies, which run on the
+server engine (DAVY JONES' LOCKER's, in the framework). The engine can also
+run whole graphs, for scheduled runs.
 
 `FlowgraphEditor`'s `server` prop is the server engine as the host app sees it:
 
@@ -214,12 +217,17 @@ status                      reactive { state, address, assistant }: state
                             assistant { model, sampleRows } or null
 query({ sql, inputs })      -> Promise<Uint8Array>  the result, as Parquet
 runPython({ code, inputs }) -> Promise<{ output, value?, variables?, error?, table? }>
+runNode({ kind, node, inputs, files })
+                            -> Promise<{ output, value?, error?, outputs }>  (optional)
 assist({ kind, request, code, inputs })
                             -> Promise<{ code, note, model }>  (optional)
 ```
 
 `inputs` is `{ name: Parquet bytes }`, named by reference name (or
-`name.table`). DAVY JONES' LOCKER's app shell supplies one
+`name.table`). `runNode` runs a node of a kind the server supplies (below):
+its `inputs` are `[{ ref, id, slot, pin, bytes }]` (or with `tables: [{ name,
+bytes }]`), `files` its file fields' files `[{ key, bytes }]`, and `outputs`
+what it made, `[{ slot, bytes }]` or with `tables`, slot null for its first. DAVY JONES' LOCKER's app shell supplies one
 (`createEngineClient({ url, name })`), which asks the engine's `GET /health`
 for `{ status: 'ok', host?, port? }` every 5 s while it answers, every 15 s
 while it doesn't (and not while the page is hidden). What it changes:
@@ -377,7 +385,7 @@ colour (`label`, white by default).
 | `idPrefix` | new nodes' IDs are `<idPrefix><n>`; by default the label, lowercase without spaces (`double1`) |
 | `run(ctx)` | runs it in the browser; without it, the node says it can't run yet |
 | `runs` | whether Manage shows Auto Run and Run; by default, whether there's a `run` |
-| `where` | `'server'` (it runs only there, and says so), `'browser'` (never on the server), or a function of the node's data returning either (SQLQuery's). Unset: the browser |
+| `where` | `'server'` (it runs only there, and says so), `'browser'` (never on the server), or a function of the node's data returning either (SQLQuery's). Unset: the browser. A kind with `where: 'server'` and no `run` runs through the `server` prop's `runNode`: that's how the kinds a server supplies run (DAVY JONES' LOCKER defines them from its engine's `GET /nodes`) |
 | `outputName` | whether Manage offers Output Name |
 | `fields` | what Manage shows for it, in order (below), each kept on the node's data under its `key` |
 | `canRun(data)` | a reason it can't run yet (shown under Run), or null |

@@ -2,10 +2,15 @@
 see .env.example for what each one means)."""
 
 import os
+from urllib.parse import urlsplit
 
 
 def _int(name: str, default: int) -> int:
     return int(os.environ.get(name) or default)
+
+
+def _list(name: str) -> list[str]:
+    return [item.strip() for item in (os.environ.get(name) or "").split(",") if item.strip()]
 
 
 # What /health reports as this engine's address.
@@ -23,6 +28,21 @@ QUERY_DATABASE_URL = os.environ.get("QUERY_DATABASE_URL") or DATABASE_URL
 
 # The Python sandbox (sandbox/), usually a service of its own beside the engine.
 RUNNER_URL = (os.environ.get("RUNNER_URL") or "http://runner:3000").rstrip("/")
+
+# The node worker (nodeworker/), which runs the app's own node kinds: needed
+# only when create_app is given some.
+NODE_WORKER_URL = (os.environ.get("NODE_WORKER_URL") or "").rstrip("/")
+
+# Hosts whose requests the engine refuses: the runner's and the node worker's,
+# and any others listed in SANDBOX_HOSTS. Scripts run there, so nothing from
+# there may use the engine (its database, its saved graphs, its AI budget, or
+# the node kinds it runs). Resolved on every request, so replicas and restarts
+# are covered. Loopback addresses are never refused (a runner on the same
+# machine, in development, shares them with everything else).
+SANDBOX_HOSTS = [
+    host for host in [urlsplit(RUNNER_URL).hostname, urlsplit(NODE_WORKER_URL).hostname if NODE_WORKER_URL else None]
+    if host
+] + _list("SANDBOX_HOSTS")
 
 # The AI assistant (POST /assist), through a LiteLLM proxy: off unless the
 # URL, key and model are all set (there's no default model: the proxy decides

@@ -3,3 +3,4 @@ runner.env
 __pycache__/
 *.pyc
 .venv/
+node-worker.env

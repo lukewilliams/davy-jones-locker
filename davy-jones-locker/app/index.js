@@ -3,5 +3,6 @@
 // for an app that wires FlowgraphEditor itself.
 export { default as DavyJonesLocker } from './DavyJonesLocker.vue'
 export { createEngineClient } from './engineClient.js'
+export { defineServerKinds } from './serverKinds.js'
 export { duckdbSql } from './duckdbSql.js'
 export { createLocalGraphStorage } from './localGraphStorage.js'

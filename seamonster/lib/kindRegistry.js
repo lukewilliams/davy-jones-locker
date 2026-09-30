@@ -68,9 +68,11 @@ export function defineNodeCategory({ id, label, colors }) {
  *   idPrefix    new nodes' IDs are <idPrefix><n>; by default the label as an
  *               identifier, without underscores (buffer1 for Buffer)
  *   run(ctx)    runs it in the browser (see graphRunner.js for ctx and what
- *               it returns); without it, the node can't run
+ *               it returns). Without it, a kind whose `where` is 'server' runs
+ *               through the server's runNode (the engine's own kinds, defined
+ *               from GET /nodes); any other can't run
  *   runs        whether Manage shows Auto Run and Run: by default, whether it
- *               has a `run`
+ *               has a `run` or runs on the server
  *   where       'server': it runs only on the server, sending it its inputs;
  *               'browser': never on the server; or a function of the node's
  *               data returning either. Unset: in the browser for now
@@ -204,7 +206,7 @@ export function defineNodeKind(definition) {
     throw new Error(`Node kind ${kind} needs an idPrefix of lowercase letters and digits (its label doesn't make one).`)
   }
   NODE_KINDS[kind] = Object.freeze(markRaw({
-    runs: typeof definition.run === 'function',
+    runs: typeof definition.run === 'function' || definition.where === 'server',
     ...definition,
     fields: (definition.fields ?? []).map((field) => Object.freeze(markRaw({ ...field }))),
     idPrefix,
@@ -275,7 +277,9 @@ export const kindsInCategory = (category) =>
 // app, or by a plugin this app doesn't install). Its node is kept as a
 // placeholder, greyed, labelled with the kind's name, and never run, with its
 // data and wires as they were, so saving the graph here loses nothing.
-export const isKnownKind = (kind) => typeof kind === 'string' && Object.hasOwn(NODE_KINDS, kind)
+// (`in` first: Vue tracks it, so what asked sees a kind defined later, one the
+// server supplies; Object.hasOwn alone it doesn't.)
+export const isKnownKind = (kind) => typeof kind === 'string' && kind in NODE_KINDS && Object.hasOwn(NODE_KINDS, kind)
 
 // A kind's entry in NODE_KINDS, or the placeholder's for an unknown kind.
 export const kindInfo = (kind) =>
