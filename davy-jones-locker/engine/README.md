@@ -1,6 +1,6 @@
 # davy-jones-locker (engine)
 
-> **Early release.** This is 0.1: the API may change between minor versions
+> **Early release.** This is 0.2: the API may change between minor versions
 > until 1.0, so pin an exact version if you depend on it.
 
 DAVY JONES' LOCKER's Python engine, which executes flowgraphs on the server

@@ -1,6 +1,6 @@
 {
   "name": "seamonster",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Vue 3 widgets for wrangling data in flowgraphs: a node-graph editor with its panels, plus menus, controls, documents, 3D scenes, sheets and maps.",
   "license": "Apache-2.0",
   "author": "Luke Williams",

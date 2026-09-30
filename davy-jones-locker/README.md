@@ -1,6 +1,6 @@
 # DAVY JONES' LOCKER
 
-> **Early release.** This is 0.1: the API may change between minor versions
+> **Early release.** This is 0.2: the API may change between minor versions
 > until 1.0, so pin an exact version if you depend on it.
 
 An app framework for flowgraphs, built on SEAMONSTER (the UI library). It

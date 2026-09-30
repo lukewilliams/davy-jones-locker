@@ -1,6 +1,6 @@
 # SEAMONSTER
 
-> **Early release.** This is 0.2: the API may change between minor versions
+> **Early release.** This is 0.3: the API may change between minor versions
 > until 1.0, so pin an exact version if you depend on it.
 
 Vue 3 widgets for wrangling data in flowgraphs. The main one is the
