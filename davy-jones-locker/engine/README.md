@@ -35,10 +35,26 @@ and its image starts from the framework's ([Dockerfile](Dockerfile)), adding
 that entry point:
 
 ```dockerfile
-FROM davy-jones-locker-engine
+FROM ghcr.io/lukewilliams/davy-jones-locker-engine:0.2.0
 COPY main.py ./
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "3000"]
 ```
+
+**The images.** The engine's, the runner's and the node worker's are
+published to GitHub's container registry for each release, from 0.2.0, for
+`linux/amd64` and `linux/arm64`:
+
+| Image | Built from |
+|---|---|
+| `ghcr.io/lukewilliams/davy-jones-locker-engine` | [Dockerfile](Dockerfile) |
+| `ghcr.io/lukewilliams/davy-jones-locker-runner` | [runner/Dockerfile](runner/Dockerfile) |
+| `ghcr.io/lukewilliams/davy-jones-locker-node-worker` | [nodeworker/Dockerfile](nodeworker/Dockerfile) |
+
+Each is tagged with the version (`0.2.0`) and its minor (`0.2`); there's no
+`latest`, so an app says which version it builds on. Or build them yourself
+from this folder (`docker build -t davy-jones-locker-engine .`, and `-f
+runner/Dockerfile` or `-f nodeworker/Dockerfile` for the others), as
+[../compose.yaml](../compose.yaml) does.
 
 The runner is used as it is ([runner/Dockerfile](runner/Dockerfile)), until
 an app adds libraries of its own; so is the node worker

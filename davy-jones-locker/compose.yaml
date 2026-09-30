@@ -8,6 +8,12 @@
 # Settings: engine/.env for the engine (copy engine/.env.example), and
 # engine/runner.env for the runner (copy engine/runner.env.example).
 #
+# This builds the images from engine/. They're published too, for each
+# release (ghcr.io/lukewilliams/davy-jones-locker-engine, -runner and
+# -node-worker, tagged with the version): replace a `build:` with
+# `image: ghcr.io/lukewilliams/davy-jones-locker-runner:0.2.0`, say, and
+# build the app's own engine FROM the engine's.
+#
 # The node worker runs the app's own node kinds (engine/davy_jones_locker/nodes.py):
 # start it with --profile nodes once the app has some. An app builds its own
 # worker image on the framework's (engine/nodeworker/Dockerfile), adding its

@@ -13,7 +13,7 @@ and (later) its own console commands.
 | Folder | What | Released as |
 |---|---|---|
 | [app/](app/) | the browser shell: the engine client, DuckDB-wasm, storage, and `DavyJonesLocker`, the whole window | `davy-jones-locker` on npm |
-| [engine/](engine/README.md) | the Python engine (FastAPI), its sandboxed runner, and the node worker for the app's own node kinds | `davy-jones-locker` on PyPI, and base images |
+| [engine/](engine/README.md) | the Python engine (FastAPI), its sandboxed runner, and the node worker for the app's own node kinds | `davy-jones-locker` on PyPI, and base images on `ghcr.io` |
 | [engine-shared/](engine-shared/README.md) | optional development services: Postgres, later identity and storage | (with the repo) |
 | [compose.yaml](compose.yaml) | the engine, runner and node worker as an app runs them, to copy | (with the repo) |
 
@@ -72,7 +72,7 @@ Vite's `resolve.dedupe` with Vue and Vue Flow.
 See [engine/README.md](engine/README.md): the API, settings, safeguards, the
 app's own node kinds (`nodes.py`, the node worker), and how an app builds its
 engine on the framework's (`create_app`, and an image `FROM
-davy-jones-locker-engine`).
+ghcr.io/lukewilliams/davy-jones-locker-engine`).
 
 ## Rules
 
