@@ -12,7 +12,8 @@ COPY nodeworker/requirements.txt ./nodeworker-requirements.txt
 RUN pip install --no-cache-dir --require-hashes -r nodeworker-requirements.txt
 
 # Only what the worker needs of the engine's package: none of its libraries.
-COPY davy_jones_locker/__init__.py davy_jones_locker/formdata.py davy_jones_locker/nodes.py ./davy_jones_locker/
+COPY davy_jones_locker/__init__.py davy_jones_locker/formdata.py ./davy_jones_locker/
+COPY davy_jones_locker/nodes ./davy_jones_locker/nodes
 COPY davy_jones_locker/nodeworker ./davy_jones_locker/nodeworker
 
 USER 65534:65534

@@ -35,7 +35,7 @@ and its image starts from the framework's ([Dockerfile](Dockerfile)), adding
 that entry point:
 
 ```dockerfile
-FROM ghcr.io/lukewilliams/davy-jones-locker-engine:0.2.0
+FROM ghcr.io/lukewilliams/davy-jones-locker-engine:0.2.1
 COPY main.py ./
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "3000"]
 ```
@@ -50,7 +50,7 @@ published to GitHub's container registry for each release, from 0.2.0, for
 | `ghcr.io/lukewilliams/davy-jones-locker-runner` | [runner/Dockerfile](runner/Dockerfile) |
 | `ghcr.io/lukewilliams/davy-jones-locker-node-worker` | [nodeworker/Dockerfile](nodeworker/Dockerfile) |
 
-Each is tagged with the version (`0.2.0`) and its minor (`0.2`); there's no
+Each is tagged with the version (`0.2.1`) and its minor (`0.2`); there's no
 `latest`, so an app says which version it builds on. Or build them yourself
 from this folder (`docker build -t davy-jones-locker-engine .`, and `-f
 runner/Dockerfile` or `-f nodeworker/Dockerfile` for the others), as
@@ -132,7 +132,7 @@ just that slot.
 
 An app defines node kinds in Python, beside its engine, and the browser learns
 them from `GET /nodes`: they need no JavaScript.
-[nodes.py](davy_jones_locker/nodes.py) has the whole of it; in short:
+[nodes/](davy_jones_locker/nodes/__init__.py) has the whole of it; in short:
 
 ```python
 # nodes.py: definitions only (the engine and the node worker both import it)
@@ -155,7 +155,11 @@ import nodes
 app = create_app(title="engine-geo", nodes=nodes.KINDS, categories=nodes.CATEGORIES)
 
 # geo_handlers.py: run only by the node worker
+from davy_jones_locker.nodes import NodeError
+
 def buffer(ctx):
+    if not ctx.inputs:
+        raise NodeError("Wire in the points to buffer.")  # shown as it is, no traceback
     table = ctx.inputs[0].table                     # a pyarrow Table
     ctx.log(f"buffering {table.num_rows} rows by {ctx.node['distance']} m")
     return {"table": ..., "slots": {"summary": ...}}  # pyarrow Tables, DataFrames or rows
@@ -171,12 +175,45 @@ def buffer(ctx):
   default).
 - **A handler** gets `ctx`: `node` (the node's data, with defaults),
   `inputs` (what's wired in, one per slot each wire carries: `ref`, `id`,
-  `slot`, `pin`, and `table` or `tables`), `input(ref)`, `file(key)` (a file
-  field's file) and `log(text)` (`print` goes to the Terminal too). It
+  `slot`, `pin`, and `table` or `tables`), `input(ref)`,
+  `file_field(key)` (the file chosen in that file field: its name as the
+  user chose it, and its bytes), `file(stored_key)` (the bytes alone, by the
+  key the field holds) and `log(text)` (`print` goes to the Terminal too). It
   returns `table` or `tables` (by name), `slots` (by slot), `value` (JSON,
   shown when there's no table): a pyarrow Table, a pandas DataFrame or a
-  list of rows each. A slot left out is an empty table; an exception is the
-  node's error, with its traceback.
+  list of rows each. A slot left out is an empty table.
+- **Errors:** raise `NodeError` (from `davy_jones_locker.nodes`, or a
+  subclass of it) for anything the node's user can fix, a setting, a file or
+  a wire: its message alone is the node's error. Any other exception is the
+  node's error with its traceback, as a bug. An input or file the node
+  wasn't given raises a `NodeError` that's also a `KeyError`.
+- **Testing a handler:** `davy_jones_locker.nodes.testing` runs one in the
+  test's own process as the worker would: the same `ctx`, tables through
+  Parquet both ways, `print` to the log, and settings that break an error
+  rule refused.
+
+  ```python
+  from davy_jones_locker.nodes.testing import Context, run
+
+  ctx = Context({"distance": 50}, inputs={"points_data": table}, kind=BUFFER,
+                files={"source": ("sites.csv", data)})   # fills in the file field too
+  result = run("geo_handlers:buffer", ctx)    # .table, .tables, .slots, .value, .output
+  ```
+
+  An exception from the handler is raised as it is, for `pytest.raises`.
+  Its docstring has the rest.
+- **A named input pin can bring several tables.** It takes one wire, and a
+  wire from a node's main pin carries every slot of that node, so `inputs`
+  can hold several items with the same `pin`. A handler wanting one table
+  there picks it (by `slot`, or by what's in it).
+- **Geometry:** write it as WKB with GeoParquet `geo` metadata on the
+  Arrow schema (each geometry column's encoding and CRS). The metadata
+  survives every hop: the worker's reply, the browser's tables, the engine's
+  whole-graph runs, and DataExport's Parquet. A SQL query's output doesn't
+  carry it yet (roadmap 8g).
+- **How long:** the worker kills a run at the kind's `timeout_s`, and the
+  engine waits for the worker `timeout_s` plus 30 seconds (for the data
+  both ways).
 - **The node worker** runs them: an image built `FROM` the framework's
   ([nodeworker/Dockerfile](nodeworker/Dockerfile)), adding the app's
   `nodes.py`, handlers and their libraries, started with
@@ -298,7 +335,9 @@ built on this one.
 davy_jones_locker/
   main.py        the API, create_app, refusing the sandboxes
   settings.py    environment settings (.env.example)
-  nodes.py       the app's node kinds: NodeKind, Field, Rule, NodeCategory
+  nodes/         the app's node kinds: NodeKind, Field, Rule, NodeCategory, NodeError
+    context.py   what a handler is given (ctx), for the worker and for tests
+    testing.py   running a handler in a test
   noderunner.py  the app's kinds as the engine knows them, and calls to the node worker
   database.py    the engine's tables in Postgres
   sql.py         locked-down DuckDB sessions, query checks
@@ -328,7 +367,8 @@ uvicorn davy_jones_locker.sandbox.server:app --port 9002
 ```
 
 With node kinds, from the app's folder (where its `nodes.py` and handlers are),
-with this folder on `PYTHONPATH`:
+with the engine installed from PyPI (`pip install davy-jones-locker`, the
+version you pin) or this folder on `PYTHONPATH`:
 
 ```
 NODE_WORKER_URL=http://127.0.0.1:9003 RUNNER_URL=http://127.0.0.1:9002 uvicorn main:app --port 9001

@@ -32,6 +32,7 @@ log = logging.getLogger("davy-jones-locker.sql")
 OUTPUTS = "flow_out"
 INPUTS = "flow_in"
 CATALOG = "db"  # the attached query database
+GEO_KEY = b"geo"  # GeoParquet's metadata key
 
 # Functions that open connections or run SQL given as text.
 BLOCKED_FUNCTIONS = {"query", "query_table"}
@@ -115,6 +116,11 @@ class Session:
         con.execute("SET lock_configuration = true")
         self._input_views: list[str] = []
         self._input_schemas: list[str] = []
+        # GeoParquet's `geo` metadata (each geometry column's encoding and
+        # CRS), by table, for tables loaded with it. A DuckDB table keeps the
+        # rows but not the metadata, so arrow() puts it back. A query's
+        # output has none.
+        self._geo: dict[str, bytes] = {}
 
     def close(self) -> None:
         self.con.close()
@@ -165,9 +171,15 @@ class Session:
             self.con.execute(f"CREATE TABLE {target} AS SELECT * FROM __flow_load")
         finally:
             self.con.unregister("__flow_load")
+        geo = (table.schema.metadata or {}).get(GEO_KEY)
+        if geo:
+            self._geo[target] = geo
 
     def arrow(self, table: str) -> pa.Table:
-        return self.con.execute(f"SELECT * FROM {table}").to_arrow_table()
+        """A table as Arrow, with its `geo` metadata if it was loaded with some."""
+        result = self.con.execute(f"SELECT * FROM {table}").to_arrow_table()
+        geo = self._geo.get(table)
+        return result.replace_schema_metadata({**(result.schema.metadata or {}), GEO_KEY: geo}) if geo else result
 
     def row_count(self, table: str) -> int:
         return self.con.execute(f"SELECT count(*) FROM {table}").fetchone()[0]

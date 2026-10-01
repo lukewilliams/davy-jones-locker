@@ -215,7 +215,8 @@ defineNodeKind({
           'Put a SQLQuery node in between to pick one.',
       }
     }
-    const bytes = await writeFile(ctx.sql, format, written, filename)
+    // Parquet through the runner, which keeps a table's GeoParquet metadata.
+    const bytes = format === 'parquet' ? await ctx.parquetOf(written[0].table) : await writeFile(ctx.sql, format, written, filename)
     return {
       ...(tables ? { tables } : { table: picked.table }),
       export: { filename, contentType: spec.contentType, size: bytes.length, bytes },

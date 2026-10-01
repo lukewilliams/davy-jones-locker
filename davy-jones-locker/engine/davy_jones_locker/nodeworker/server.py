@@ -120,7 +120,8 @@ async def run_in(workdir: Path, kind: nodes.NodeKind, node: dict, inputs: list, 
         else:
             continue
         specs.append(spec)
-    request = {"handler": kind.handler, "node": node, "inputs": specs, "files": stored}
+    request = {"handler": kind.handler, "node": node, "labels": {f.key: f.label for f in kind.fields},
+               "inputs": specs, "files": stored}
     (workdir / "request.json").write_text(json.dumps(request), encoding="utf-8")
 
     extra = {"preexec_fn": set_limits} if os.name == "posix" else {}

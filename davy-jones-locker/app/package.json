@@ -1,6 +1,6 @@
 {
   "name": "davy-jones-locker",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "An app framework for flowgraphs on SEAMONSTER: the browser shell (engine client, DuckDB-wasm, storage). Its Python engine is davy-jones-locker on PyPI.",
   "license": "Apache-2.0",
   "author": "Luke Williams",

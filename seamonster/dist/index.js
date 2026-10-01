@@ -151,44 +151,44 @@ function ve(e) {
 }
 //#endregion
 //#region lib/sqlText.js
-var K = (e) => `"${e.replaceAll("\"", "\"\"")}"`, ye = (e) => `'${e.replaceAll("'", "''")}'`;
-async function be(e, t, n, r) {
-	let i = await e.query(`COPY (${t}) TO ${ye(n)} (${r})`);
+var K = (e) => `"${e.replaceAll("\"", "\"\"")}"`, q = (e) => `'${e.replaceAll("'", "''")}'`;
+async function ye(e, t, n, r) {
+	let i = await e.query(`COPY (${t}) TO ${q(n)} (${r})`);
 	return Number(i.rows[0]?.[0] ?? 0);
 }
-async function xe(e) {
+async function be(e) {
 	await e.query("INSTALL excel"), await e.query("LOAD excel");
 }
 //#endregion
 //#region lib/xlsx.js
-var Se = 67324752, Ce = 33639248, we = 101010256, Te = "This doesn't look like an .xlsx file.", Ee = (e) => new DataView(e.buffer, e.byteOffset, e.byteLength);
-function De(e, t) {
-	for (let n = e.length - 22; n >= Math.max(0, e.length - 65557); n--) if (t.getUint32(n, !0) === we) return n;
+var xe = 67324752, Se = 33639248, Ce = 101010256, we = "This doesn't look like an .xlsx file.", Te = (e) => new DataView(e.buffer, e.byteOffset, e.byteLength);
+function Ee(e, t) {
+	for (let n = e.length - 22; n >= Math.max(0, e.length - 65557); n--) if (t.getUint32(n, !0) === Ce) return n;
 	return -1;
 }
-async function Oe(e) {
-	return [...(await je(e, "xl/workbook.xml")).matchAll(/<sheet\b[^>]*?\bname="([^"]*)"/g)].map((e) => ke(e[1]));
+async function De(e) {
+	return [...(await Ae(e, "xl/workbook.xml")).matchAll(/<sheet\b[^>]*?\bname="([^"]*)"/g)].map((e) => Oe(e[1]));
 }
-var ke = (e) => e.replace(/&(lt|gt|quot|apos|amp);/g, (e, t) => ({
+var Oe = (e) => e.replace(/&(lt|gt|quot|apos|amp);/g, (e, t) => ({
 	lt: "<",
 	gt: ">",
 	quot: "\"",
 	apos: "'",
 	amp: "&"
 })[t]);
-function Ae(e) {
-	let t = Ee(e);
-	if (e.length >= 4 && t.getUint32(0, !0) === Se) return e;
-	let n = De(e, t);
+function ke(e) {
+	let t = Te(e);
+	if (e.length >= 4 && t.getUint32(0, !0) === xe) return e;
+	let n = Ee(e, t);
 	if (n < 0) return e;
 	let r = t.getUint32(n + 12, !0), i = t.getUint32(n + 16, !0), a = n - r - i;
-	return a > 0 && t.getUint32(a, !0) === Se ? e.slice(a) : e;
+	return a > 0 && t.getUint32(a, !0) === xe ? e.slice(a) : e;
 }
-async function je(e, t) {
-	let n = Ee(e), r = De(e, n);
-	if (r < 0) throw Error(Te);
+async function Ae(e, t) {
+	let n = Te(e), r = Ee(e, n);
+	if (r < 0) throw Error(we);
 	let i = n.getUint16(r + 10, !0), a = n.getUint32(r + 16, !0);
-	for (let r = 0; r < i && n.getUint32(a, !0) === Ce; r++) {
+	for (let r = 0; r < i && n.getUint32(a, !0) === Se; r++) {
 		let r = n.getUint16(a + 10, !0), i = n.getUint32(a + 20, !0), o = n.getUint16(a + 28, !0), s = o + n.getUint16(a + 30, !0) + n.getUint16(a + 32, !0);
 		if (new TextDecoder().decode(e.subarray(a + 46, a + 46 + o)) === t) {
 			let t = n.getUint32(a + 42, !0), o = t + 30 + n.getUint16(t + 26, !0) + n.getUint16(t + 28, !0), s = e.subarray(o, o + i);
@@ -197,74 +197,74 @@ async function je(e, t) {
 				let e = new Blob([s]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
 				return new Response(e).text();
 			}
-			throw Error(Te);
+			throw Error(we);
 		}
 		a += 46 + s;
 	}
-	throw Error(Te);
+	throw Error(we);
 }
-var Me = "flow_out", Ne = "flow_in", Pe = /* @__PURE__ */ new Set([
+var je = "flow_out", Me = "flow_in", Ne = /* @__PURE__ */ new Set([
 	"memory",
 	"system",
 	"temp"
-]), Fe = /* @__PURE__ */ new Set(["information_schema", "pg_catalog"]), Ie = (e) => e?.message ?? String(e);
+]), Pe = /* @__PURE__ */ new Set(["information_schema", "pg_catalog"]), Fe = (e) => e?.message ?? String(e), Ie = (e) => e ? `FORMAT parquet, KV_METADATA {geo: ${q(e)}}` : "FORMAT parquet";
 function Le(e, t) {
 	Array.isArray(e) ? e.forEach((e) => Le(e, t)) : e && typeof e == "object" && (t(e), Object.values(e).forEach((e) => Le(e, t)));
 }
 function Re(e) {
-	let t = Promise.resolve(), n = [];
-	function r(e) {
+	let t = Promise.resolve(), n = [], r = /* @__PURE__ */ new Map();
+	function i(e) {
 		let n = t.then(e);
 		return t = n.catch(() => {}), n;
 	}
-	let i = (e, t, { paged: n = null, getFile: i, server: o = { state: "unavailable" } }) => r(async () => (await a(e, t, n, {
-		getFile: i,
-		server: o
+	let a = (e, t, { paged: n = null, getFile: r, server: a = { state: "unavailable" } }) => i(async () => (await o(e, t, n, {
+		getFile: r,
+		server: a
 	})).results);
-	async function a(t, n, r, { getFile: i, server: a }) {
+	async function o(t, n, i, { getFile: a, server: o }) {
 		if (!e) throw Error("No SQL engine is connected, so nodes can't run.");
-		let o = new Map(t.nodes.map((e) => [e.id, e])), { order: s, inputs: c } = Be(t, n);
-		await e.query(`DROP SCHEMA IF EXISTS ${Me} CASCADE`), await e.query(`CREATE SCHEMA ${Me}`);
-		let d = /* @__PURE__ */ new Map(), f = {
-			outputs: d,
-			getFile: i,
-			server: a
-		}, p = {};
-		for (let e of s) {
-			let t = c.get(e) ?? [], n = t.map((e) => e.source).find((e) => p[e].error);
+		let s = new Map(t.nodes.map((e) => [e.id, e])), { order: c, inputs: l } = Be(t, n);
+		await e.query(`DROP SCHEMA IF EXISTS ${je} CASCADE`), await e.query(`CREATE SCHEMA ${je}`), r = /* @__PURE__ */ new Map();
+		let f = /* @__PURE__ */ new Map(), p = {
+			outputs: f,
+			getFile: a,
+			server: o
+		}, m = {};
+		for (let e of c) {
+			let t = l.get(e) ?? [], n = t.map((e) => e.source).find((e) => m[e].error);
 			if (n) {
-				p[e] = { error: `Upstream node ${n} failed.` };
+				m[e] = { error: `Upstream node ${n} failed.` };
 				continue;
 			}
-			let i = o.get(e), a = r?.id === e ? r : { page: 0 };
+			let r = s.get(e), a = i?.id === e ? i : { page: 0 };
 			try {
-				let n = l(t, o, d);
-				await y(n), p[e] = await u(i, n, a, f);
+				let n = u(t, s, f);
+				await x(n), m[e] = await d(r, n, a, p);
 			} catch (t) {
-				p[e] = { error: Ie(t) };
+				m[e] = { error: Fe(t) };
 			}
 		}
 		return {
-			results: p,
-			outputs: d
+			results: m,
+			outputs: f
 		};
 	}
-	let o = (e, t, { getFile: n, server: i = { state: "unavailable" }, sampleRows: a = 0 }) => r(() => s(e, t, {
+	let s = (e, t, { getFile: n, server: r = { state: "unavailable" }, sampleRows: a = 0 }) => i(() => c(e, t, {
 		getFile: n,
-		server: i,
+		server: r,
 		sampleRows: a
 	}));
-	async function s(t, n, { getFile: r, server: i, sampleRows: o }) {
+	async function c(t, n, { getFile: r, server: i, sampleRows: a }) {
 		let s = [...new Set(t.edges.filter((e) => e.target === n).map((e) => e.source))];
 		if (!s.length) return [];
 		if (!e) throw Error("No SQL engine is connected, so the inputs can't be read.");
-		let l = new Map(t.nodes.map((e) => [e.id, e])), { results: u, outputs: d } = await a(t, s, null, {
+		let c = new Map(t.nodes.map((e) => [e.id, e])), { results: u, outputs: d } = await o(t, s, null, {
 			getFile: r,
 			server: i
 		}), f = [];
 		for (let e of s) {
-			let t = l.get(e), n = {
-				name: Yt(e, t),
+			let t = c.get(e), n = {
+				name: Xt(e, t),
 				kind: Q(t.kind).label,
 				label: t.label ?? ""
 			}, r = d.get(e);
@@ -283,13 +283,13 @@ function Re(e) {
 				...n,
 				tables: await Promise.all(i.map(async (e) => ({
 					name: e.name,
-					...await c(e.table, o)
+					...await l(e.table, a)
 				})))
 			});
 		}
 		return f;
 	}
-	async function c(t, n) {
+	async function l(t, n) {
 		return {
 			columns: (await e.query(`DESCRIBE SELECT * FROM ${t}`)).rows.map(([e, t]) => ({
 				name: e,
@@ -299,11 +299,11 @@ function Re(e) {
 			sample: (n > 0 ? (await e.query(`SELECT * FROM ${t} LIMIT ${Math.floor(n)}`)).rows : []).map((e) => e.map(ze))
 		};
 	}
-	function l(e, t, n) {
+	function u(e, t, n) {
 		let r = /* @__PURE__ */ new Set(), i = [];
 		for (let a of e) {
 			let e = t.get(a.source), o = a.targetHandle?.startsWith("target:") ? a.targetHandle.slice(7) : null;
-			for (let t of tn(a.sourceHandle, e.id, e)) {
+			for (let t of nn(a.sourceHandle, e.id, e)) {
 				let a = JSON.stringify([
 					e.id,
 					t.name,
@@ -326,52 +326,52 @@ function Re(e) {
 		}
 		return i;
 	}
-	async function u(t, n, r, i) {
-		if (!Z(t.kind)) return { error: `No ${t.kind} nodes are available here (they come from another app, a plugin this app doesn't install, or a server that isn't connected), so this one can't run. It's kept as it was, and saving the graph keeps it.` };
-		let a = Y[t.kind], o = a.run ?? (a.where === "server" ? (e) => d(e, a) : null);
+	async function d(t, n, r, i) {
+		if (!Wt(t.kind)) return { error: `No ${t.kind} nodes are available here (they come from another app, a plugin this app doesn't install, or a server that isn't connected), so this one can't run. It's kept as it was, and saving the graph keeps it.` };
+		let a = X[t.kind], o = a.run ?? (a.where === "server" ? (e) => f(e, a) : null);
 		if (!o) return { error: `${a.label} nodes can't run yet.` };
 		let s = Vt(t).filter((e) => e.severity === "error");
 		if (s.length) return { error: s.map((e) => `${e.label}: ${e.message}`).join(" ") };
-		let c = f(It(t), n, i), { table: l, tables: u, slots: p, error: m, ...h } = await o(c) ?? {};
+		let c = p(It(t), n, i), { table: l, tables: u, slots: d, error: m, ...h } = await o(c) ?? {};
 		if (m) return {
 			error: m,
 			...h.output === void 0 ? {} : { output: h.output }
 		};
-		let g = async (t) => (await e.query(`CREATE TABLE ${t} AS SELECT NULL::VARCHAR AS value WHERE false`), { table: t }), _ = u ? { tables: u } : l ? { table: l } : await g(c.table()), v = $t(t.id, t).slice(1), y = {};
+		let g = async (t) => (await e.query(`CREATE TABLE ${t} AS SELECT NULL::VARCHAR AS value WHERE false`), { table: t }), _ = u ? { tables: u } : l ? { table: l } : await g(c.table()), v = en(t.id, t).slice(1), y = {};
 		for (let e of v) {
-			let t = p?.[e.name];
+			let t = d?.[e.name];
 			y[e.name] = typeof t == "string" ? { table: t } : t?.tables ? { tables: t.tables } : await g(c.slotTable(e.name));
 		}
 		if (i.outputs.set(t.id, {
 			..._,
 			...v.length ? { slots: y } : {}
 		}), h.export) return h;
-		let x = async (e, t) => {
+		let b = async (e, t) => {
 			let n = (e) => (r.slot ?? null) === t && (r.table ?? null) === e ? r.page ?? 0 : 0;
-			if (e.table) return { data: await b(e.table, n(null)) };
+			if (e.table) return { data: await S(e.table, n(null)) };
 			let i = [];
 			for (let t of e.tables) i.push({
 				name: t.name,
 				label: t.label,
-				data: await b(t.table, n(t.name))
+				data: await S(t.table, n(t.name))
 			});
 			return { tables: i };
-		}, S = {
+		}, x = {
 			...h,
-			...u || l ? await x(_, null) : {}
+			...u || l ? await b(_, null) : {}
 		};
 		if (v.length) {
-			S.slots = [];
-			for (let e of v) S.slots.push({
+			x.slots = [];
+			for (let e of v) x.slots.push({
 				name: e.name,
 				label: e.label,
 				ref: e.ref,
-				...await x(y[e.name], e.name)
+				...await b(y[e.name], e.name)
 			});
 		}
-		return S;
+		return x;
 	}
-	async function d(e, { kind: t, label: n, fields: r = [] }) {
+	async function f(e, { kind: t, label: n, fields: r = [] }) {
 		if (e.server.state !== "connected" || typeof e.server.runNode != "function") return { error: `${n} nodes run on the server, which isn't available.` };
 		let i = [];
 		for (let t of e.inputs) {
@@ -381,13 +381,13 @@ function Re(e) {
 				id: n,
 				slot: r,
 				pin: a,
-				bytes: await h(t.table)
+				bytes: await g(t.table)
 			});
 			else {
 				let o = [];
 				for (let e of t.tables) o.push({
 					name: e.name,
-					bytes: await h(e.table)
+					bytes: await g(e.table)
 				});
 				i.push({
 					ref: e,
@@ -424,7 +424,7 @@ function Re(e) {
 			slots: {}
 		}, l = async (t, n, r) => {
 			let i = n === null ? e.table(r) : e.slotTable(n, r);
-			return await g(i, t), i;
+			return await _(i, t), i;
 		};
 		for (let e of o.outputs ?? []) {
 			let t;
@@ -448,7 +448,7 @@ function Re(e) {
 		}
 		return c;
 	}
-	function f(t, n, { getFile: r, server: i }) {
+	function p(t, n, { getFile: r, server: i }) {
 		return {
 			id: t.id,
 			node: t,
@@ -456,21 +456,22 @@ function Re(e) {
 			sql: e,
 			server: i,
 			getFile: r,
-			table: (e) => `${Me}.${K(e ? `${t.id}/${e}` : t.id)}`,
-			slotTable: (e, n) => `${Me}.${K(n ? `${t.id}#${e}/${n}` : `${t.id}#${e}`)}`,
-			rows: v,
-			parquet: () => m(n),
-			loadParquet: g,
-			loadRows: _,
-			serverTables: (e) => p(e, [...new Set(n.map((e) => e.ref))])
+			table: (e) => `${je}.${K(e ? `${t.id}/${e}` : t.id)}`,
+			slotTable: (e, n) => `${je}.${K(n ? `${t.id}#${e}/${n}` : `${t.id}#${e}`)}`,
+			rows: b,
+			parquet: () => h(n),
+			parquetOf: g,
+			loadParquet: _,
+			loadRows: y,
+			serverTables: (e) => m(e, [...new Set(n.map((e) => e.ref))])
 		};
 	}
-	async function p(t, n) {
+	async function m(t, n) {
 		let r = t.trim().replace(/;+\s*$/, "");
 		if (!r || !e) return [];
 		let i;
 		try {
-			i = JSON.parse((await e.query(`SELECT json_serialize_sql(${ye(r)})`)).rows[0][0]);
+			i = JSON.parse((await e.query(`SELECT json_serialize_sql(${q(r)})`)).rows[0][0]);
 		} catch {
 			return [];
 		}
@@ -480,46 +481,52 @@ function Re(e) {
 			for (let { key: t } of e.cte_map?.map ?? []) c.add(a(t));
 			e.type === "BASE_TABLE" && s.push(e);
 		});
-		let l = ({ catalog_name: e, schema_name: t, table_name: n }) => e ? Pe.has(a(e)) : t ? Fe.has(a(t)) || o.has(a(t)) : o.has(a(n)) || c.has(a(n)), u = s.filter((e) => !l(e)).map((e) => [
+		let l = ({ catalog_name: e, schema_name: t, table_name: n }) => e ? Ne.has(a(e)) : t ? Pe.has(a(t)) || o.has(a(t)) : o.has(a(n)) || c.has(a(n)), u = s.filter((e) => !l(e)).map((e) => [
 			e.catalog_name,
 			e.schema_name,
 			e.table_name
 		].filter(Boolean).join("."));
 		return [...new Set(u)];
 	}
-	async function m(e) {
+	async function h(e) {
 		let t = [], n = /* @__PURE__ */ new Set();
 		for (let r of e) if (!n.has(r.ref)) {
 			if (n.add(r.ref), r.table) t.push({
 				name: r.ref,
-				bytes: await h(r.table)
+				bytes: await g(r.table)
 			});
 			else for (let e of r.tables) t.push({
 				name: `${r.ref}.${e.name}`,
-				bytes: await h(e.table)
+				bytes: await g(e.table)
 			});
 		}
 		return t;
 	}
-	async function h(t) {
+	async function g(t) {
 		let n = `flow-send-${Date.now()}-${Math.random().toString(36).slice(2)}.parquet`;
-		await be(e, `SELECT * FROM ${t}`, n, "FORMAT parquet");
+		await ye(e, `SELECT * FROM ${t}`, n, Ie(r.get(t)));
 		try {
 			return await e.readFile(n);
 		} finally {
 			await e.dropFile(n);
 		}
 	}
-	async function g(t, n) {
-		let r = `flow-received-${Date.now()}-${Math.random().toString(36).slice(2)}.parquet`;
-		await e.registerFile(r, n);
+	async function _(t, n) {
+		let i = `flow-received-${Date.now()}-${Math.random().toString(36).slice(2)}.parquet`;
+		await e.registerFile(i, n);
 		try {
-			await e.query(`CREATE TABLE ${t} AS SELECT * FROM read_parquet(${ye(r)})`);
+			await e.query(`CREATE TABLE ${t} AS SELECT * FROM read_parquet(${q(i)})`);
+			let n = await v(i);
+			n && r.set(t, n);
 		} finally {
-			await e.dropFile(r);
+			await e.dropFile(i);
 		}
 	}
-	async function _(t, n) {
+	async function v(t) {
+		let { rows: n } = await e.query(`SELECT decode(value) FROM parquet_kv_metadata(${q(t)}) WHERE decode(key) = 'geo'`);
+		return n[0]?.[0] ?? null;
+	}
+	async function y(t, n) {
 		if (!n.length) {
 			await e.query(`CREATE TABLE ${t} AS SELECT NULL::VARCHAR AS value WHERE false`);
 			return;
@@ -527,27 +534,27 @@ function Re(e) {
 		let r = `flow-rows-${Date.now()}-${Math.random().toString(36).slice(2)}.json`;
 		await e.registerFile(r, new TextEncoder().encode(JSON.stringify(n)));
 		try {
-			await e.query(`CREATE TABLE ${t} AS SELECT * FROM read_json_auto(${ye(r)}, format = 'array')`);
+			await e.query(`CREATE TABLE ${t} AS SELECT * FROM read_json_auto(${q(r)}, format = 'array')`);
 		} finally {
 			await e.dropFile(r);
 		}
 	}
-	async function v(t) {
+	async function b(t) {
 		let n = async (t) => {
 			let { columns: n, rows: r } = await e.query(`SELECT * FROM ${t}`);
 			return r.map((e) => Object.fromEntries(n.map((t, n) => [t, e[n]])));
 		};
 		return t.table ? n(t.table) : Object.fromEntries(await Promise.all(t.tables.map(async (e) => [e.name, await n(e.table)])));
 	}
-	async function y(t) {
-		for (let t of [Ne, ...n]) await e.query(`DROP SCHEMA IF EXISTS ${K(t)} CASCADE`);
-		n = [], await e.query(`CREATE SCHEMA ${Ne}`), await e.query(`SET search_path = '${Ne},main'`);
+	async function x(t) {
+		for (let t of [Me, ...n]) await e.query(`DROP SCHEMA IF EXISTS ${K(t)} CASCADE`);
+		n = [], await e.query(`CREATE SCHEMA ${Me}`), await e.query(`SET search_path = '${Me},main'`);
 		let r = /* @__PURE__ */ new Set();
 		for (let i of t) {
 			let t = i.ref;
 			if (!r.has(t)) {
 				if (r.add(t), i.table) {
-					await e.query(`CREATE VIEW ${Ne}.${K(t)} AS SELECT * FROM ${i.table}`);
+					await e.query(`CREATE VIEW ${Me}.${K(t)} AS SELECT * FROM ${i.table}`);
 					continue;
 				}
 				await e.query(`CREATE SCHEMA ${K(t)}`), n.push(t);
@@ -555,7 +562,7 @@ function Re(e) {
 			}
 		}
 	}
-	async function b(t, n) {
+	async function S(t, n) {
 		let r = Number((await e.query(`SELECT count(*) FROM ${t}`)).rows[0][0]), { columns: i, rows: a } = await e.query(`SELECT * FROM ${t} LIMIT 100 OFFSET ${n * 100}`);
 		return {
 			columns: i,
@@ -566,33 +573,33 @@ function Re(e) {
 			hasMore: (n + 1) * 100 < r
 		};
 	}
-	let x = (e, t, n) => r(() => S(e, t, n));
-	async function S(t, n, r) {
+	let C = (e, t, n) => i(() => w(e, t, n));
+	async function w(t, n, r) {
 		if (!e) throw Error("No SQL engine is connected, so files can't be read.");
 		let i = `flow-upload-${Date.now()}.${G[r].extensions[0]}`, a = [];
 		await e.registerFile(i, t);
 		try {
-			let o = await C(r, i, t, n, a), s = [], c = [];
+			let o = await T(r, i, t, n, a), s = r === "parquet" ? await v(i) : null, c = [], l = [];
 			for (let [t, { label: n, select: r }] of o.entries()) {
-				let o = Kt(Jt(n) || "table", c);
-				c.push(o);
-				let l = `${i}-${t}.parquet`;
-				a.push(l);
-				let u = await be(e, r, l, "FORMAT parquet");
-				s.push({
+				let o = qt(Yt(n) || "table", l);
+				l.push(o);
+				let u = `${i}-${t}.parquet`;
+				a.push(u);
+				let d = await ye(e, r, u, Ie(s));
+				c.push({
 					name: o,
 					label: n,
-					rowCount: u,
-					bytes: await e.readFile(l)
+					rowCount: d,
+					bytes: await e.readFile(u)
 				});
 			}
-			return s;
+			return c;
 		} finally {
 			for (let t of [i, ...a]) await e.dropFile(t);
 		}
 	}
-	async function C(t, n, r, i, a) {
-		let o = ye(n), s = (e) => [{
+	async function T(t, n, r, i, a) {
+		let o = q(n), s = (e) => [{
 			label: i.replace(/\.[^.]*$/, ""),
 			select: e
 		}];
@@ -602,32 +609,32 @@ function Re(e) {
 			case "json": return s(`SELECT * FROM read_json_auto(${o})`);
 			case "parquet": return s(`SELECT * FROM read_parquet(${o})`);
 			case "geojson": return s(`SELECT unnest(f.properties), to_json(f.geometry)::VARCHAR AS geometry FROM (SELECT unnest(features) AS f FROM read_json_auto(${o}))`);
-			case "xlsx": return await xe(e), (await Oe(r)).map((e) => ({
+			case "xlsx": return await be(e), (await De(r)).map((e) => ({
 				label: e,
-				select: `SELECT * FROM read_xlsx(${o}, sheet = ${ye(e)}, header = true)`
+				select: `SELECT * FROM read_xlsx(${o}, sheet = ${q(e)}, header = true)`
 			}));
 			case "sqlite": {
 				if (!e.readSqlite) throw Error("This SQL engine can't read SQLite files.");
 				let t = await e.readSqlite(r), i = [];
 				for (let [e, r] of t.entries()) i.push({
 					label: r.name,
-					select: await w(r, `${n}-rows-${e}.json`, a)
+					select: await E(r, `${n}-rows-${e}.json`, a)
 				});
 				return i;
 			}
 			default: throw Error(`Can't read ${G[t]?.label ?? t} files.`);
 		}
 	}
-	async function w({ columns: t, rows: n }, r, i) {
+	async function E({ columns: t, rows: n }, r, i) {
 		if (!n.length) return `SELECT ${t.map((e) => `NULL::VARCHAR AS ${K(e)}`).join(", ") || "NULL AS empty"} WHERE false`;
 		let a = n.map((e) => Object.fromEntries(t.map((t, n) => [t, e[n]])));
-		return await e.registerFile(r, new TextEncoder().encode(JSON.stringify(a))), i.push(r), `SELECT * FROM read_json_auto(${ye(r)}, format = 'array')`;
+		return await e.registerFile(r, new TextEncoder().encode(JSON.stringify(a))), i.push(r), `SELECT * FROM read_json_auto(${q(r)}, format = 'array')`;
 	}
 	return {
-		run: i,
-		readFile: x,
-		serverTables: p,
-		describeInputs: o
+		run: a,
+		readFile: C,
+		serverTables: m,
+		describeInputs: s
 	};
 }
 function ze(e) {
@@ -656,7 +663,7 @@ function Be(e, t) {
 }
 //#endregion
 //#region lib/flowGraph.js
-var q = Symbol("flow-graph"), Ve = 190, He = 90, Ue = {
+var J = Symbol("flow-graph"), Ve = 190, He = 90, Ue = {
 	x: 0,
 	y: .5
 }, We = {
@@ -722,7 +729,7 @@ function Ye({ sql: e = null, files: t = null, server: r = null } = {}) {
 	}), h = E(/* @__PURE__ */ new Set()), g = 0, _ = u(() => i.getSelectedNodes.value[0] ?? null), v = () => [...i.nodes.value, ...s.flatMap((e) => e.nodes)].map((e) => e.id);
 	function y(e, t) {
 		return {
-			id: Gt(e, v()),
+			id: Kt(e, v()),
 			type: "pipeline",
 			position: t,
 			data: { kind: e }
@@ -800,7 +807,7 @@ function Ye({ sql: e = null, files: t = null, server: r = null } = {}) {
 	let k = (e, t) => e === t || O(e).includes(t);
 	function A({ source: e, target: t, targetHandle: n }) {
 		if (k(t, e)) return !1;
-		let r = nn(i.findNode(t)?.data ?? {}).find((e) => e.handle === (n ?? "target-0"));
+		let r = rn(i.findNode(t)?.data ?? {}).find((e) => e.handle === (n ?? "target-0"));
 		return r ? r.many || !i.edges.value.some((e) => e.target === t && e.targetHandle === r.handle) : !1;
 	}
 	function j(e, { self: t = !0 } = {}) {
@@ -811,13 +818,13 @@ function Ye({ sql: e = null, files: t = null, server: r = null } = {}) {
 		if (!n || !e) return;
 		let r = i.edges.value.filter((e) => e.target === t).flatMap((e) => {
 			let t = i.findNode(e.source);
-			return t ? tn(e.sourceHandle, t.id, t.data).map((e) => e.ref) : [];
+			return t ? nn(e.sourceHandle, t.id, t.data).map((e) => e.ref) : [];
 		}), o = await a.serverTables(n.data.sqlQuery ?? "", [...new Set(r)]);
 		if (i.findNode(t) !== n) return;
 		let s = n.data.sqlServerTables;
 		(!s || o.join("\n") !== s.join("\n")) && i.updateNodeData(t, { sqlServerTables: o });
 	}
-	P(() => Object.keys(Y).length, () => {
+	P(() => Object.keys(X).length, () => {
 		for (let e of i.nodes.value) e.data.kind === "sql-query" && e.data.sqlQuery && M(e.id);
 	});
 	function N(e) {
@@ -850,12 +857,12 @@ function Ye({ sql: e = null, files: t = null, server: r = null } = {}) {
 		let n = i.findNode(e);
 		if (t === (n.data.label ?? "")) return;
 		i.updateNodeData(e, { label: t || void 0 });
-		let r = Jt(t);
-		r && qt(n.data.kind, e) && ee(e, Kt(r, v().filter((t) => t !== e)));
+		let r = Yt(t);
+		r && Jt(n.data.kind, e) && ee(e, qt(r, v().filter((t) => t !== e)));
 	}
 	function I(e, t) {
-		let n = i.findNode(e), r = Jt(t), a = r && r !== "data" ? r : void 0;
-		return a === n.data.outputSuffix ? null : a && $t(e, n.data).some((e) => e.name === a) ? `This node already has an output called ${a} (${e}_${a}). Choose another name.` : (i.updateNodeData(e, { outputSuffix: a }), j(e, { self: !1 }), null);
+		let n = i.findNode(e), r = Yt(t), a = r && r !== "data" ? r : void 0;
+		return a === n.data.outputSuffix ? null : a && en(e, n.data).some((e) => e.name === a) ? `This node already has an output called ${a} (${e}_${a}). Choose another name.` : (i.updateNodeData(e, { outputSuffix: a }), j(e, { self: !1 }), null);
 	}
 	function L(e, t) {
 		let n = i.findNode(e).data, r = Object.keys(t).filter((e) => JSON.stringify(t[e]) !== JSON.stringify(n[e]));
@@ -1161,7 +1168,7 @@ var Xe = { class: "flow-field" }, Ze = [
 		required: !0
 	} },
 	setup(e) {
-		let t = e, n = _(q), r = D("");
+		let t = e, n = _(J), r = D("");
 		P(() => t.node, () => r.value = "");
 		let i = u(() => t.node.data.ingest), a = u(() => n.reading.has(t.node.id)), o = u(() => i.value && de(i.value.fileName)), s = u(() => {
 			let { fileName: e, fileSize: t, format: n, tables: r } = i.value, a = (e) => `${e.toLocaleString()} ${e === 1 ? "row" : "rows"}`, o = G[n].multi ? `${r.length} ${n === "xlsx" ? "sheets" : "tables"}, ${a(r.reduce((e, t) => e + t.rowCount, 0))}` : a(r[0]?.rowCount ?? 0);
@@ -1234,7 +1241,7 @@ var Xe = { class: "flow-field" }, Ze = [
 	label: t.label,
 	badge: { class: `flow-node--${t.id}` },
 	items: Ut(t.id).map((t) => ({
-		label: Y[t].label,
+		label: X[t].label,
 		command: e,
 		args: { kind: t }
 	}))
@@ -1260,7 +1267,7 @@ function pt(e, n) {
 }
 //#endregion
 //#region components/fieldFocus.js
-function J(e) {
+function Y(e) {
 	let t = e.target.parentElement.closest("[tabindex]");
 	t ? t.focus() : e.target.blur();
 }
@@ -1281,7 +1288,7 @@ var mt = {
 		required: !0
 	} },
 	setup(e) {
-		let t = e, n = _(q), r = D(""), i = null;
+		let t = e, n = _(J), r = D(""), i = null;
 		P(() => [t.node, t.node.data.exportInput], () => {
 			i = t.node, r.value = t.node.data.exportInput ?? "";
 		}, { immediate: !0 });
@@ -1289,7 +1296,7 @@ var mt = {
 			n.flow.findNode(i.id) === i && n.updateData(i.id, { exportInput: r.value.trim() || void 0 });
 		}
 		let o = u(() => [...new Set(n.flow.edges.value.filter((e) => e.target === t.node.id).map((e) => e.source))].map((e) => n.flow.findNode(e)).filter(Boolean).flatMap((e) => {
-			let t = Yt(e.id, e.data), n = Q(e.data.kind).category, r = e.data.ingest && G[e.data.ingest.format].multi ? e.data.ingest.tables : [];
+			let t = Xt(e.id, e.data), n = Q(e.data.kind).category, r = e.data.ingest && G[e.data.ingest.format].multi ? e.data.ingest.tables : [];
 			return [{
 				name: t,
 				category: n
@@ -1334,7 +1341,7 @@ var mt = {
 				spellcheck: "false",
 				"aria-describedby": v.note,
 				onBlur: a,
-				onKeydown: [t[1] ||= L((...e) => M(J) && M(J)(...e), ["enter"]), L(ne(d, ["alt", "prevent"]), ["down"])]
+				onKeydown: [t[1] ||= L((...e) => M(Y) && M(Y)(...e), ["enter"]), L(ne(d, ["alt", "prevent"]), ["down"])]
 			}, null, 40, gt), [[te, r.value]]), m("button", {
 				type: "button",
 				class: "flow-field-combo-button",
@@ -1455,7 +1462,7 @@ var wt = A([
 		id: "custom",
 		label: "Custom"
 	}
-]), Y = A({}), Tt = /* @__PURE__ */ new Set(["boundary", "unknown"]), Et = /^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)?$/, Dt = /^[a-z][a-z0-9-]*$/, Ot = /^#[0-9a-f]{3}([0-9a-f]{3})?$/i, kt = null;
+]), X = A({}), Tt = /* @__PURE__ */ new Set(["boundary", "unknown"]), Et = /^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)?$/, Dt = /^[a-z][a-z0-9-]*$/, Ot = /^#[0-9a-f]{3}([0-9a-f]{3})?$/i, kt = null;
 function At({ id: e, label: t, colors: n }) {
 	if (!Dt.test(e ?? "")) throw Error(`A category's id is lowercase letters, digits and hyphens: "${e}" isn't.`);
 	if (!t) throw Error(`Category ${e} needs a label.`);
@@ -1516,10 +1523,10 @@ function Ft(e, t) {
 		}
 	}
 }
-function X(e) {
+function Z(e) {
 	let { kind: t, label: n, category: r } = e;
 	if (!Et.test(t ?? "")) throw Error(`A node kind's name is lowercase letters, digits and hyphens, with one dot at most: "${t}" isn't.`);
-	if (Z(t)) throw Error(`There's already a node kind called ${t}.`);
+	if (Wt(t)) throw Error(`There's already a node kind called ${t}.`);
 	if (!n) throw Error(`Node kind ${t} needs a label.`);
 	if (!wt.some((e) => e.id === r)) throw Error(`Node kind ${t} is in category "${r}", which isn't defined.`);
 	if (e.run !== void 0 && typeof e.run != "function") throw Error(`Node kind ${t}'s run must be a function.`);
@@ -1527,9 +1534,9 @@ function X(e) {
 	else if (e.slots !== void 0 && typeof e.slots != "function") throw Error(`Node kind ${t}'s slots must be a list, or a function of the node's data.`);
 	if (Array.isArray(e.inputPins)) Pt(t, "input pin", e.inputPins);
 	else if (e.inputPins !== void 0 && typeof e.inputPins != "function") throw Error(`Node kind ${t}'s inputPins must be a list, or a function of the node's data.`);
-	let i = e.idPrefix ?? Jt(n).replaceAll("_", "");
+	let i = e.idPrefix ?? Yt(n).replaceAll("_", "");
 	if (!/^[a-z][a-z0-9]*$/.test(i)) throw Error(`Node kind ${t} needs an idPrefix of lowercase letters and digits (its label doesn't make one).`);
-	Y[t] = Object.freeze(v({
+	X[t] = Object.freeze(v({
 		runs: typeof e.run == "function" || e.where === "server",
 		...e,
 		fields: (e.fields ?? []).map((e) => Object.freeze(v({ ...e }))),
@@ -1581,49 +1588,49 @@ function Vt(e) {
 	let t = It(e);
 	return (Q(e.kind).fields ?? []).filter((e) => e.key && (!e.visible || e.visible(t))).flatMap((e) => Bt(e, t[e.key], t)).sort((e, t) => e.severity === t.severity ? 0 : e.severity === "error" ? -1 : 1);
 }
-var Ht = "application/x-flow-node-kind", Ut = (e) => Object.keys(Y).filter((t) => Y[t].category === e), Z = (e) => typeof e == "string" && e in Y && Object.hasOwn(Y, e), Q = (e) => Z(e) ? Y[e] : {
+var Ht = "application/x-flow-node-kind", Ut = (e) => Object.keys(X).filter((t) => X[t].category === e), Wt = (e) => typeof e == "string" && e in X && Object.hasOwn(X, e), Q = (e) => Wt(e) ? X[e] : {
 	label: String(e),
 	category: "unknown",
 	unknown: !0
 };
-function Wt(e, t) {
+function Gt(e, t) {
 	let n = 1;
 	for (; t.has(`${e}${n}`);) n++;
 	return `${e}${n}`;
 }
-var Gt = (e, t) => Wt(Y[e].idPrefix, new Set(t));
-function Kt(e, t) {
+var Kt = (e, t) => Gt(X[e].idPrefix, new Set(t));
+function qt(e, t) {
 	let n = new Set(t);
-	return n.has(e) ? Wt(e, n) : e;
+	return n.has(e) ? Gt(e, n) : e;
 }
-var qt = (e, t) => Z(e) && RegExp(`^${Y[e].idPrefix}\\d+$`).test(t);
-function Jt(e) {
+var Jt = (e, t) => Wt(e) && RegExp(`^${X[e].idPrefix}\\d+$`).test(t);
+function Yt(e) {
 	let t = e.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 	return /^\d/.test(t) ? `_${t}` : t;
 }
-var Yt = (e, t) => `${e}_${t.outputSuffix || "data"}`;
-function Xt(e) {
-	if (!Z(e.kind)) return null;
-	let { where: t } = Y[e.kind];
+var Xt = (e, t) => `${e}_${t.outputSuffix || "data"}`;
+function Zt(e) {
+	if (!Wt(e.kind)) return null;
+	let { where: t } = X[e.kind];
 	return (typeof t == "function" ? t(e) : t) ?? null;
 }
-var Zt = (e) => Xt(e) === "server", Qt = (e, t) => typeof e == "function" ? e(t) ?? [] : e ?? [];
-function $t(e, t) {
+var Qt = (e) => Zt(e) === "server", $t = (e, t) => typeof e == "function" ? e(t) ?? [] : e ?? [];
+function en(e, t) {
 	let n = {
 		name: null,
 		label: t.outputSuffix || "data",
-		ref: Yt(e, t),
+		ref: Xt(e, t),
 		pin: !1
 	}, r = new Set(t.slotPins ?? []);
-	return [n, ...(Z(t.kind) ? Qt(Y[t.kind].slots, It(t)) : []).filter((e) => e.name !== n.label).map((t) => ({
+	return [n, ...(Wt(t.kind) ? $t(X[t.kind].slots, It(t)) : []).filter((e) => e.name !== n.label).map((t) => ({
 		name: t.name,
 		label: t.label ?? t.name,
 		ref: `${e}_${t.name}`,
 		pin: !!t.pin || r.has(t.name)
 	}))];
 }
-function en(e, t) {
-	let n = $t(e, t);
+function tn(e, t) {
+	let n = en(e, t);
 	return [{
 		handle: "source-0",
 		slots: n
@@ -1632,27 +1639,27 @@ function en(e, t) {
 		slots: [e]
 	}))];
 }
-function tn(e, t, n) {
-	let r = $t(t, n);
+function nn(e, t, n) {
+	let r = en(t, n);
 	if (!e?.startsWith("source:")) return r;
 	let i = e.slice(7);
 	return r.filter((e) => e.name === i);
 }
-function nn(e) {
+function rn(e) {
 	return [{
 		handle: "target-0",
 		name: null,
 		label: null,
 		many: !0
-	}, ...(Z(e.kind) ? Qt(Y[e.kind].inputPins, It(e)) : []).map((e) => ({
+	}, ...(Wt(e.kind) ? $t(X[e.kind].inputPins, It(e)) : []).map((e) => ({
 		handle: `target:${e.name}`,
 		name: e.name,
 		label: e.label ?? e.name,
 		many: !!e.many
 	}))];
 }
-var rn = (e) => Array.from({ length: e }, (t, n) => `${(n + 1) / (e + 1) * 100}%`), an = (e) => e?.message ?? String(e), on = (e, t) => e.state === "connected" && typeof e[t] == "function";
-X({
+var an = (e) => Array.from({ length: e }, (t, n) => `${(n + 1) / (e + 1) * 100}%`), on = (e) => e?.message ?? String(e), sn = (e, t) => e.state === "connected" && typeof e[t] == "function";
+Z({
 	kind: "sql-query",
 	label: "SQLQuery",
 	category: "fetch",
@@ -1673,24 +1680,24 @@ X({
 		if (!t) return { error: "Write a query first." };
 		let n = e.table(), r = await e.serverTables(t);
 		if (!r.length) await e.sql.query(`CREATE TABLE ${n} AS ${t}`);
-		else if (on(e.server, "query")) await e.loadParquet(n, await e.server.query({
+		else if (sn(e.server, "query")) await e.loadParquet(n, await e.server.query({
 			sql: t,
 			inputs: await e.parquet()
 		}));
 		else return { error: `This query reads ${r.length === 1 ? `${r[0]}, which isn't` : `${r.join(", ")}, which aren't`} wired in, so it runs on the server, which isn't available.` };
 		return { table: n };
 	}
-}), X({
+}), Z({
 	kind: "3d-asset",
 	label: "3D Asset",
 	category: "fetch",
 	idPrefix: "asset"
-}), X({
+}), Z({
 	kind: "http-request",
 	label: "HTTP Request",
 	category: "fetch",
 	idPrefix: "httprequest"
-}), X({
+}), Z({
 	kind: "python-script",
 	label: "PythonScript",
 	category: "modify",
@@ -1707,7 +1714,7 @@ X({
 		hint: "Each node wired in is a pandas DataFrame named by its output, like `sqlnode1_data` (several tables: `dataingest1_data.sheet1`). The last line's value is this node's output: a DataFrame as its table, anything else shown as a value. `print` shows in the Terminal; `sleep(seconds)` waits. Ctrl+Enter runs."
 	}],
 	async run(e) {
-		if (!on(e.server, "runPython")) return { error: "PythonScript nodes run on the server, which isn't available. Every other kind runs here in the browser." };
+		if (!sn(e.server, "runPython")) return { error: "PythonScript nodes run on the server, which isn't available. Every other kind runs here in the browser." };
 		let t = e.node.pythonCode ?? "";
 		if (!t.trim()) return { error: "Write some code first." };
 		let n = await e.server.runPython({
@@ -1732,7 +1739,7 @@ X({
 			...i
 		};
 	}
-}), X({
+}), Z({
 	kind: "javascript",
 	label: "JavaScript",
 	category: "modify",
@@ -1758,7 +1765,7 @@ X({
 			({value: r, logs: i} = await Ct(t, n));
 		} catch (e) {
 			return {
-				error: an(e),
+				error: on(e),
 				output: (e.logs ?? []).join("\n")
 			};
 		}
@@ -1774,28 +1781,28 @@ X({
 			output: a
 		};
 	}
-}), X({
+}), Z({
 	kind: "geometry-script",
 	label: "GeometryScript",
 	category: "modify",
 	idPrefix: "geoscript"
-}), X({
+}), Z({
 	kind: "hlsl",
 	label: "HLSL",
 	category: "modify",
 	idPrefix: "hlsl"
-}), X({
+}), Z({
 	kind: "network-fuse",
 	label: "Network Fuse",
 	category: "modify",
 	idPrefix: "networkfuse",
 	runs: !0
-}), X({
+}), Z({
 	kind: "debug",
 	label: "Debug",
 	category: "debug",
 	idPrefix: "debug"
-}), X({
+}), Z({
 	kind: "data-ingest",
 	label: "DataIngest",
 	category: "import",
@@ -1822,13 +1829,13 @@ X({
 		}
 		return G[t.format].multi ? { tables: n } : { table: n[0].table };
 	}
-}), X({
+}), Z({
 	kind: "dxf-import",
 	label: "DXF Import",
 	category: "import",
 	idPrefix: "dxfimport",
 	runs: !0
-}), X({
+}), Z({
 	kind: "data-export",
 	label: "DataExport",
 	category: "export",
@@ -1863,14 +1870,14 @@ X({
 	],
 	runHint: "Writes whatever's wired into this node on Run. Downloads to your computer immediately; errors show in the Terminal panel.",
 	async run(e) {
-		let t = sn(e.node, e.inputs);
+		let t = cn(e.node, e.inputs);
 		if (t.error) return t;
 		let { input: n, tables: r } = t, i = (e.node.exportFilename ?? "").trim() || "export", a = e.node.exportFormat || de(i) || "csv", o = fe(i, a), s = G[a], c = r ?? [{
-			name: Jt(n.id) || "data",
+			name: Yt(n.id) || "data",
 			table: t.table
 		}];
 		if (c.length > 1 && s.multi !== "read-write") return { error: `${s.label} holds one table, and ${n.id} has ${c.length}. Put a SQLQuery node in between to pick one.` };
-		let l = await cn(e.sql, a, c, o);
+		let l = a === "parquet" ? await e.parquetOf(c[0].table) : await ln(e.sql, a, c, o);
 		return {
 			...r ? { tables: r } : { table: t.table },
 			export: {
@@ -1882,7 +1889,7 @@ X({
 		};
 	}
 });
-function sn(e, t) {
+function cn(e, t) {
 	if (!t.length) return { error: "Wire a node into this one to export its data." };
 	let n = t.map((e) => e.ref), r = (e.exportInput ?? "").trim(), i = (e) => e.tables ? {
 		input: e,
@@ -1905,9 +1912,9 @@ function sn(e, t) {
 		table: c.table
 	};
 }
-async function cn(e, t, n, r) {
+async function ln(e, t, n, r) {
 	let i = async (t) => e.query(`SELECT * FROM ${t}`);
-	if (t === "geojson") return new TextEncoder().encode(JSON.stringify(ln(await i(n[0].table))));
+	if (t === "geojson") return new TextEncoder().encode(JSON.stringify(un(await i(n[0].table))));
 	if (t === "sqlite") {
 		if (!e.writeSqlite) throw Error("This SQL engine can't write SQLite files.");
 		return e.writeSqlite(await Promise.all(n.map(async (e) => ({
@@ -1922,17 +1929,17 @@ async function cn(e, t, n, r) {
 		parquet: "FORMAT parquet",
 		xlsx: "FORMAT xlsx, HEADER true"
 	}[t];
-	t === "xlsx" && await xe(e);
+	t === "xlsx" && await be(e);
 	let o = `flow-export-${Date.now()}-${r}`;
-	await be(e, `SELECT * FROM ${n[0].table}`, o, a);
+	await ye(e, `SELECT * FROM ${n[0].table}`, o, a);
 	try {
 		let n = await e.readFile(o);
-		return t === "xlsx" ? Ae(n) : n;
+		return t === "xlsx" ? ke(n) : n;
 	} finally {
 		await e.dropFile(o);
 	}
 }
-function ln({ columns: e, rows: t }) {
+function un({ columns: e, rows: t }) {
 	let n = e.findIndex((e) => e.toLowerCase() === "geometry");
 	if (n < 0) throw Error("GeoJSON needs a geometry column of GeoJSON text, like a .geojson file read by DataIngest has.");
 	return {
@@ -1944,7 +1951,7 @@ function ln({ columns: e, rows: t }) {
 		}))
 	};
 }
-X({
+Z({
 	kind: "subnet",
 	label: "Subnet",
 	category: "custom",
@@ -1953,19 +1960,19 @@ X({
 });
 //#endregion
 //#region components/FlowNode.vue
-var un = {
+var dn = {
 	key: 0,
 	class: "flow-node-kind"
-}, dn = ["aria-label", "title"], fn = {
+}, fn = ["aria-label", "title"], pn = {
 	key: 2,
 	class: "flow-blink-dot flow-node-server-dot",
 	role: "img",
 	"aria-label": "Executes on server",
 	title: "Executes on server"
-}, pn = {
+}, mn = {
 	key: 4,
 	class: "flow-node-ref-hint"
-}, mn = {
+}, hn = {
 	__name: "FlowNode",
 	props: {
 		id: {
@@ -1984,7 +1991,7 @@ var un = {
 			completed: "Run completed.",
 			failed: "Run failed.",
 			stale: "Stale."
-		}, r = t, i = _(q), a = u(() => Q(r.data.kind)), o = u(() => Zt(r.data)), s = u(() => i.server.value.state), c = u(() => Vt(r.data)), m = u(() => c.value.find((e) => e.severity === "error")), h = u(() => c.value.filter((e) => e.severity === "warn")), v = u(() => o.value && s.value === "unavailable" ? "Backend not available." : n[i.run.status[r.id]] ?? (a.value.unknown ? "Not available here." : m.value ? `${m.value.label}: ${m.value.message}` : "")), y = V(), S = u(() => new Set(y.value.map((e) => e.source === r.id ? e.sourceHandle : e.targetHandle))), C = (e) => u(() => {
+		}, r = t, i = _(J), a = u(() => Q(r.data.kind)), o = u(() => Qt(r.data)), s = u(() => i.server.value.state), c = u(() => Vt(r.data)), m = u(() => c.value.find((e) => e.severity === "error")), h = u(() => c.value.filter((e) => e.severity === "warn")), v = u(() => o.value && s.value === "unavailable" ? "Backend not available." : n[i.run.status[r.id]] ?? (a.value.unknown ? "Not available here." : m.value ? `${m.value.label}: ${m.value.message}` : "")), y = V(), S = u(() => new Set(y.value.map((e) => e.source === r.id ? e.sourceHandle : e.targetHandle))), C = (e) => u(() => {
 			let t;
 			if (a.value.unknown) {
 				let n = y.value.filter((t) => (e === "source" ? t.source : t.target) === r.id).map((t) => e === "source" ? t.sourceHandle : t.targetHandle);
@@ -1993,16 +2000,16 @@ var un = {
 					label: null,
 					refs: []
 				}));
-			} else t = e === "target" ? nn(r.data).map((e) => ({
+			} else t = e === "target" ? rn(r.data).map((e) => ({
 				id: e.handle,
 				label: e.label,
 				refs: []
-			})) : en(r.id, r.data).map((e) => ({
+			})) : tn(r.id, r.data).map((e) => ({
 				id: e.handle,
 				label: e.handle === "source-0" ? null : e.slots[0].label,
 				refs: e.slots.map((e) => e.ref)
 			}));
-			let n = rn(t.length);
+			let n = an(t.length);
 			return t.map((e, t) => ({
 				...e,
 				top: n[t]
@@ -2013,7 +2020,7 @@ var un = {
 			onPointerenter: r[1] ||= (e) => k.value = !0,
 			onPointerleave: r[2] ||= (e) => k.value = !1
 		}, [
-			t.data.label ? (w(), p("span", un, j(a.value.label), 1)) : f("", !0),
+			t.data.label ? (w(), p("span", dn, j(a.value.label), 1)) : f("", !0),
 			g(oe, {
 				label: t.data.label || a.value.label,
 				status: v.value,
@@ -2029,8 +2036,8 @@ var un = {
 				role: "img",
 				"aria-label": h.value.map((e) => `${e.label}: ${e.message}`).join(" "),
 				title: h.value.map((e) => `${e.label}: ${e.message}`).join("\n")
-			}, "!", 10, dn)) : f("", !0),
-			o.value && s.value === "connected" ? (w(), p("span", fn)) : f("", !0),
+			}, "!", 10, fn)) : f("", !0),
+			o.value && s.value === "connected" ? (w(), p("span", pn)) : f("", !0),
 			(w(!0), p(l, null, O(M(T), (e) => (w(), d(M(z), {
 				id: e.id,
 				key: e.id,
@@ -2075,7 +2082,7 @@ var un = {
 				class: "flow-pin-label flow-pin-label--out",
 				style: x({ top: e.top })
 			}, j(e.label), 5))), 128))], 64)) : f("", !0),
-			A.value?.refs.length ? (w(), p("span", pn, [(w(!0), p(l, null, O(A.value.refs, (e) => (w(), p("span", {
+			A.value?.refs.length ? (w(), p("span", mn, [(w(!0), p(l, null, O(A.value.refs, (e) => (w(), p("span", {
 				key: e,
 				class: "flow-node-ref-hint-line"
 			}, j(e), 1))), 128))])) : f("", !0)
@@ -2084,13 +2091,13 @@ var un = {
 			context: t.id
 		}]]);
 	}
-}, hn = ["d"], gn = [
+}, gn = ["d"], _n = [
 	"id",
 	"x1",
 	"y1",
 	"x2",
 	"y2"
-], _n = ["d", "stroke"], vn = ["d", "stroke"], yn = ["d"], bn = ["d"], xn = {
+], vn = ["d", "stroke"], yn = ["d", "stroke"], bn = ["d"], xn = ["d"], Sn = {
 	__name: "FlowWire",
 	props: {
 		id: {
@@ -2132,7 +2139,7 @@ var un = {
 		}
 	},
 	setup(t) {
-		let n = t, r = _(q), i = u(() => ie(n)[0]), a = (e) => r.run.status[e] === "completed", o = u(() => a(n.source) ? a(n.target) ? "flowed" : "flowing" : r.run.started ? "dormant" : "pristine"), s = (e) => {
+		let n = t, r = _(J), i = u(() => ie(n)[0]), a = (e) => r.run.status[e] === "completed", o = u(() => a(n.source) ? a(n.target) ? "flowed" : "flowing" : r.run.started ? "dormant" : "pristine"), s = (e) => {
 			let t = r.flow.findNode(e);
 			return t ? `flow-node--${Q(t.data.kind).category}` : "";
 		}, c = N().replace(/[^\w-]/g, ""), d = `flow-wire-flowed-${c}`, h = `flow-wire-flowing-${c}`;
@@ -2141,7 +2148,7 @@ var un = {
 				key: 0,
 				class: b(["flow-wire", o.value === "pristine" ? "flow-wire--idle" : "flow-wire--waiting"]),
 				d: i.value
-			}, null, 10, hn)) : (w(), p(l, { key: 1 }, [
+			}, null, 10, gn)) : (w(), p(l, { key: 1 }, [
 				m("defs", null, [(w(!0), p(l, null, O([d, h], (e) => (w(), p("linearGradient", {
 					id: e,
 					key: e,
@@ -2156,39 +2163,39 @@ var un = {
 				}, null, 2), m("stop", {
 					offset: "1",
 					class: b(e === d ? ["flow-wire-stop-target", s(t.target)] : "flow-wire-stop-dormant")
-				}, null, 2)], 8, gn))), 128))]),
+				}, null, 2)], 8, _n))), 128))]),
 				m("path", {
 					class: "flow-wire",
 					d: i.value,
 					stroke: `url(#${d})`
-				}, null, 8, _n),
+				}, null, 8, vn),
 				m("path", {
 					class: b(["flow-wire flow-wire--grow", { "is-complete": o.value === "flowed" }]),
 					d: i.value,
 					pathLength: "1",
 					stroke: `url(#${h})`
-				}, null, 10, vn)
+				}, null, 10, yn)
 			], 64)),
 			t.selected ? (w(), p("path", {
 				key: 2,
 				class: "flow-wire-gaps",
 				d: i.value
-			}, null, 8, yn)) : f("", !0),
+			}, null, 8, bn)) : f("", !0),
 			m("path", {
 				class: "flow-wire-hit",
 				d: i.value
-			}, null, 8, bn)
+			}, null, 8, xn)
 		])), [[M(e), {
 			items: M(ut),
 			context: t.id
 		}]]);
 	}
-}, Sn = [
+}, Cn = [
 	"x1",
 	"y1",
 	"x2",
 	"y2"
-], Cn = ["d", "stroke"], wn = {
+], wn = ["d", "stroke"], Tn = {
 	__name: "FlowConnectionLine",
 	props: {
 		sourceX: {
@@ -2226,7 +2233,7 @@ var un = {
 		fromInput: Boolean
 	},
 	setup(e) {
-		let t = e, n = _(q), r = u(() => ie(t)[0]), i = u(() => {
+		let t = e, n = _(J), r = u(() => ie(t)[0]), i = u(() => {
 			let e = {
 				x: t.sourceX,
 				y: t.sourceY
@@ -2252,17 +2259,17 @@ var un = {
 		}, null, 2), m("stop", {
 			offset: "1",
 			class: b(o.value[1])
-		}, null, 2)], 8, Sn)]), m("path", {
+		}, null, 2)], 8, Cn)]), m("path", {
 			class: "flow-wire flow-connection-line",
 			d: r.value,
 			stroke: `url(#${s})`
-		}, null, 8, Cn)], 64));
+		}, null, 8, wn)], 64));
 	}
-}, Tn = {
+}, En = {
 	__name: "FlowCanvas",
 	emits: ["connection-dropped"],
 	setup(e, { emit: t }) {
-		let n = t, r = _(q), { onConnect: i, onConnectStart: a, onConnectEnd: o } = r.flow, s = null, c = !1;
+		let n = t, r = _(J), { onConnect: i, onConnectStart: a, onConnectEnd: o } = r.flow, s = null, c = !1;
 		a(({ nodeId: e, handleId: t, handleType: n }) => {
 			s = {
 				nodeId: e,
@@ -2295,7 +2302,7 @@ var un = {
 			} catch {
 				return;
 			}
-			Z(t?.kind) && r.addNode(t.kind, {
+			Wt(t?.kind) && r.addNode(t.kind, {
 				x: e.clientX,
 				y: e.clientY
 			}, t.grab ?? void 0);
@@ -2316,7 +2323,7 @@ var un = {
 			"selection-key-code": null,
 			"multi-selection-key-code": null
 		}, {
-			"node-pipeline": F(({ id: e, data: t, selected: n }) => [g(mn, {
+			"node-pipeline": F(({ id: e, data: t, selected: n }) => [g(hn, {
 				id: e,
 				data: t,
 				selected: n
@@ -2325,7 +2332,7 @@ var un = {
 				"data",
 				"selected"
 			])]),
-			"edge-wire": F((e) => [g(xn, {
+			"edge-wire": F((e) => [g(Sn, {
 				id: e.id,
 				source: e.source,
 				target: e.target,
@@ -2348,7 +2355,7 @@ var un = {
 				"target-y",
 				"target-position"
 			])]),
-			"connection-line": F((e) => [g(wn, {
+			"connection-line": F((e) => [g(Tn, {
 				"source-x": e.sourceX,
 				"source-y": e.sourceY,
 				"source-position": e.sourcePosition,
@@ -2377,16 +2384,16 @@ var un = {
 			_: 1
 		}, 8, ["connection-mode", "is-valid-connection"])], 32));
 	}
-}, En = {
+}, Dn = {
 	key: 0,
 	class: "flow-panel-empty"
-}, Dn = ["title"], On = {
+}, On = ["title"], kn = {
 	key: 1,
 	class: "flow-terminal-line flow-terminal-note"
-}, kn = {
+}, An = {
 	__name: "TerminalPanel",
 	setup(e) {
-		let t = _(q), n = t.selectedNode, r = u(() => n.value ? t.logs.nodes[n.value.id]?.entries ?? [] : t.logs.app), i = u(() => n.value && t.run.status[n.value.id] === "stale"), a = {
+		let t = _(J), n = t.selectedNode, r = u(() => n.value ? t.logs.nodes[n.value.id]?.entries ?? [] : t.logs.app), i = u(() => n.value && t.run.status[n.value.id] === "stale"), a = {
 			output: "flow-terminal-output",
 			error: "flow-terminal-error",
 			info: "flow-terminal-line",
@@ -2416,7 +2423,7 @@ var un = {
 				ref: o,
 				class: "flow-terminal"
 			}, [
-				r.value.length ? f("", !0) : (w(), p("p", En, " Nothing to show yet — run a node to see its output or errors here. ")),
+				r.value.length ? f("", !0) : (w(), p("p", Dn, " Nothing to show yet — run a node to see its output or errors here. ")),
 				(w(!0), p(l, null, O(r.value, (e) => (w(), d(k(e.type === "output" || e.type === "error" ? "pre" : "p"), {
 					key: e.id,
 					class: b(a[e.type])
@@ -2425,15 +2432,15 @@ var un = {
 						key: 0,
 						class: "flow-terminal-count",
 						title: M(n) ? `${e.count} times since this node last changed` : `${e.count} times`
-					}, " ×" + j(e.count), 9, Dn)) : f("", !0)]),
+					}, " ×" + j(e.count), 9, On)) : f("", !0)]),
 					_: 2
 				}, 1032, ["class"]))), 128)),
-				i.value && r.value.length ? (w(), p("p", On, " This node has changed since it ran (or something upstream has). Its next run starts a new log. ")) : f("", !0)
+				i.value && r.value.length ? (w(), p("p", kn, " This node has changed since it ran (or something upstream has). Its next run starts a new log. ")) : f("", !0)
 			], 512)]),
 			_: 1
 		}));
 	}
-}, An = { class: "flow-library" }, jn = { class: "flow-library-heading" }, Mn = { class: "flow-library-cards" }, Nn = ["title", "onDragstart"], Pn = {
+}, jn = { class: "flow-library" }, Mn = { class: "flow-library-heading" }, Nn = { class: "flow-library-cards" }, Pn = ["title", "onDragstart"], Fn = {
 	__name: "LibraryPanel",
 	setup(e) {
 		let t = u(() => wt.map((e) => ({
@@ -2459,26 +2466,26 @@ var un = {
 			"default-size": 238,
 			collapsed: ""
 		}, {
-			default: F(() => [m("div", An, [(w(!0), p(l, null, O(t.value, (e) => (w(), p("section", {
+			default: F(() => [m("div", jn, [(w(!0), p(l, null, O(t.value, (e) => (w(), p("section", {
 				key: e.id,
 				class: "flow-library-section"
-			}, [m("h3", jn, [m("span", {
+			}, [m("h3", Mn, [m("span", {
 				class: b(["flow-library-dot", `flow-node--${e.id}`]),
 				"aria-hidden": "true"
-			}, null, 2), h(" " + j(e.label), 1)]), m("div", Mn, [(w(!0), p(l, null, O(e.kinds, (t) => (w(), p("div", {
+			}, null, 2), h(" " + j(e.label), 1)]), m("div", Nn, [(w(!0), p(l, null, O(e.kinds, (t) => (w(), p("div", {
 				key: t,
 				class: b(["flow-library-card", `flow-node--${e.id}`]),
 				draggable: "true",
-				title: `Drag onto the canvas to add ${M(Y)[t].label}`,
+				title: `Drag onto the canvas to add ${M(X)[t].label}`,
 				onDragstart: (e) => n(t, e)
-			}, [g(oe, { label: M(Y)[t].label }, null, 8, ["label"])], 42, Nn))), 128))])]))), 128))])]),
+			}, [g(oe, { label: M(X)[t].label }, null, 8, ["label"])], 42, Pn))), 128))])]))), 128))])]),
 			_: 1
 		}));
 	}
-}, Fn = { class: "flow-props" }, In = { class: "flow-field" }, Ln = ["aria-disabled"], Rn = {
+}, In = { class: "flow-props" }, Ln = { class: "flow-field" }, Rn = ["aria-disabled"], zn = {
 	__name: "FlowgraphsPanel",
 	setup(e) {
-		let t = _(q);
+		let t = _(J);
 		return (e, n) => (w(), d(c, {
 			class: "flowgraphs-panel",
 			name: "flowgraphs",
@@ -2489,16 +2496,16 @@ var un = {
 			"above-bottom": "",
 			collapsed: ""
 		}, {
-			default: F(() => [m("div", Fn, [m("div", In, [m("button", {
+			default: F(() => [m("div", In, [m("div", Ln, [m("button", {
 				type: "button",
 				class: "flow-button",
 				"aria-disabled": M(t).run.executing,
 				onClick: n[0] ||= (e) => M(t).run.executing || M(t).executeGraph()
-			}, j(M(t).run.executing ? "Executing…" : "Execute Graph"), 9, Ln), n[1] ||= m("p", { class: "flow-field-hint" }, " Runs every node with Auto Run on, and the nodes they depend on. ", -1)])])]),
+			}, j(M(t).run.executing ? "Executing…" : "Execute Graph"), 9, Rn), n[1] ||= m("p", { class: "flow-field-hint" }, " Runs every node with Auto Run on, and the nodes they depend on. ", -1)])])]),
 			_: 1
 		}));
 	}
-}, zn = { class: "flow-data" }, Bn = { class: "flow-table-wrap" }, Vn = { class: "flow-table" }, Hn = { class: "flow-pager" }, Un = ["aria-disabled"], Wn = ["aria-disabled"], Gn = {
+}, Bn = { class: "flow-data" }, Vn = { class: "flow-table-wrap" }, Hn = { class: "flow-table" }, Un = { class: "flow-pager" }, Wn = ["aria-disabled"], Gn = ["aria-disabled"], Kn = {
 	__name: "DataTable",
 	props: {
 		data: {
@@ -2510,66 +2517,66 @@ var un = {
 	emits: ["turn"],
 	setup(e, { emit: t }) {
 		let n = e, r = t, i = (e) => !n.busy && (e < 0 ? n.data.page > 0 : n.data.hasMore), a = (e) => i(e) && r("turn", e), o = (e) => e == null ? "" : typeof e == "object" ? JSON.stringify(e) : String(e);
-		return (t, n) => (w(), p("div", zn, [m("div", Bn, [m("table", Vn, [m("thead", null, [m("tr", null, [(w(!0), p(l, null, O(e.data.columns, (e, t) => (w(), p("th", { key: t }, j(e), 1))), 128))])]), m("tbody", null, [(w(!0), p(l, null, O(e.data.rows, (e, t) => (w(), p("tr", { key: t }, [(w(!0), p(l, null, O(e, (e, t) => (w(), p("td", { key: t }, j(o(e)), 1))), 128))]))), 128))])])]), m("div", Hn, [
+		return (t, n) => (w(), p("div", Bn, [m("div", Vn, [m("table", Hn, [m("thead", null, [m("tr", null, [(w(!0), p(l, null, O(e.data.columns, (e, t) => (w(), p("th", { key: t }, j(e), 1))), 128))])]), m("tbody", null, [(w(!0), p(l, null, O(e.data.rows, (e, t) => (w(), p("tr", { key: t }, [(w(!0), p(l, null, O(e, (e, t) => (w(), p("td", { key: t }, j(o(e)), 1))), 128))]))), 128))])])]), m("div", Un, [
 			m("span", null, "Page " + j(e.data.page + 1), 1),
 			m("button", {
 				type: "button",
 				class: "flow-button flow-button--quiet",
 				"aria-disabled": !i(-1),
 				onClick: n[0] ||= (e) => a(-1)
-			}, " Prev ", 8, Un),
+			}, " Prev ", 8, Wn),
 			m("button", {
 				type: "button",
 				class: "flow-button flow-button--quiet",
 				"aria-disabled": !i(1),
 				onClick: n[1] ||= (e) => a(1)
-			}, " Next ", 8, Wn)
+			}, " Next ", 8, Gn)
 		])]));
 	}
-}, Kn = {
+}, qn = {
 	key: 0,
 	class: "flow-panel-empty"
-}, qn = {
+}, Jn = {
 	key: 1,
 	class: "flow-panel-empty"
-}, Jn = {
+}, Yn = {
 	key: 2,
 	class: "flow-panel-empty"
-}, Yn = {
+}, Xn = {
 	key: 3,
 	class: "flow-data-tabs"
-}, Xn = {
+}, Zn = {
 	key: 0,
 	class: "flow-tabs",
 	role: "tablist",
 	"aria-label": "Outputs"
-}, Zn = ["aria-selected", "onClick"], Qn = {
+}, Qn = ["aria-selected", "onClick"], $n = {
 	key: 1,
 	class: "flow-value"
-}, $n = { class: "flow-value-type" }, er = { class: "flow-value-text" }, tr = {
+}, er = { class: "flow-value-type" }, tr = { class: "flow-value-text" }, nr = {
 	key: 2,
 	class: "flow-panel-empty"
-}, nr = {
+}, rr = {
 	key: 3,
 	class: "flow-tabs",
 	role: "tablist"
-}, rr = [
+}, ir = [
 	"aria-selected",
 	"title",
 	"onClick"
-], ir = {
+], ar = {
 	key: 0,
 	class: "flow-panel-empty"
-}, ar = {
+}, or = {
 	__name: "DataPanel",
 	setup(e) {
-		let t = _(q), n = t.selectedNode, r = u(() => n.value && t.run.results[n.value.id]), i = u(() => n.value && t.run.status[n.value.id] === "running"), a = D(null), o = D(null);
+		let t = _(J), n = t.selectedNode, r = u(() => n.value && t.run.results[n.value.id]), i = u(() => n.value && t.run.status[n.value.id] === "running"), a = D(null), o = D(null);
 		P(n, () => {
 			a.value = null, o.value = null;
 		}), P(a, () => o.value = null);
 		let s = u(() => r.value?.slots?.length ? [{
 			name: null,
-			ref: Yt(n.value.id, n.value.data)
+			ref: Xt(n.value.id, n.value.data)
 		}, ...r.value.slots] : []), h = u(() => a.value === null ? r.value : r.value?.slots?.find((e) => e.name === a.value) ?? r.value), g = u(() => {
 			let e = h.value?.tables;
 			return e && (e.find((e) => e.name === o.value) ?? e[0]);
@@ -2583,17 +2590,17 @@ var un = {
 			"default-size": 240,
 			collapsed: ""
 		}, {
-			default: F(() => [!r.value || r.value.error ? (w(), p("p", Kn, "Run a node to see its output here.")) : r.value.export && r.value.export.downloaded ? (w(), p("p", qn, " “" + j(r.value.export.filename) + "” was downloaded to your computer. ", 1)) : r.value.export ? (w(), p("p", Jn, " “" + j(r.value.export.filename) + "” was written as this node ran upstream of another, not downloaded. Run this node to download it. ", 1)) : (w(), p("div", Yn, [
-				s.value.length ? (w(), p("div", Xn, [(w(!0), p(l, null, O(s.value, (e) => (w(), p("button", {
+			default: F(() => [!r.value || r.value.error ? (w(), p("p", qn, "Run a node to see its output here.")) : r.value.export && r.value.export.downloaded ? (w(), p("p", Jn, " “" + j(r.value.export.filename) + "” was downloaded to your computer. ", 1)) : r.value.export ? (w(), p("p", Yn, " “" + j(r.value.export.filename) + "” was written as this node ran upstream of another, not downloaded. Run this node to download it. ", 1)) : (w(), p("div", Xn, [
+				s.value.length ? (w(), p("div", Zn, [(w(!0), p(l, null, O(s.value, (e) => (w(), p("button", {
 					key: e.ref,
 					type: "button",
 					role: "tab",
 					class: "flow-tab flow-tab--mono",
 					"aria-selected": e.name === a.value,
 					onClick: (t) => a.value = e.name
-				}, j(e.ref), 9, Zn))), 128))])) : f("", !0),
-				h.value.value && h.value.value.kind !== "none" ? (w(), p("div", Qn, [m("p", $n, j(h.value.value.type), 1), m("pre", er, j(h.value.value.kind === "json" ? JSON.stringify(h.value.value.value, null, 2) : h.value.value.text), 1)])) : v.value ? f("", !0) : (w(), p("p", tr, " This node's output isn't tabular — see the Terminal panel. ")),
-				h.value.tables ? (w(), p("div", nr, [(w(!0), p(l, null, O(h.value.tables, (e) => (w(), p("button", {
+				}, j(e.ref), 9, Qn))), 128))])) : f("", !0),
+				h.value.value && h.value.value.kind !== "none" ? (w(), p("div", $n, [m("p", er, j(h.value.value.type), 1), m("pre", tr, j(h.value.value.kind === "json" ? JSON.stringify(h.value.value.value, null, 2) : h.value.value.text), 1)])) : v.value ? f("", !0) : (w(), p("p", nr, " This node's output isn't tabular — see the Terminal panel. ")),
+				h.value.tables ? (w(), p("div", rr, [(w(!0), p(l, null, O(h.value.tables, (e) => (w(), p("button", {
 					key: e.name,
 					type: "button",
 					role: "tab",
@@ -2601,34 +2608,34 @@ var un = {
 					"aria-selected": e === g.value,
 					title: e.label === e.name ? void 0 : `${e.label} (${e.name} in SQL)`,
 					onClick: (t) => o.value = e.name
-				}, j(e.label), 9, rr))), 128))])) : f("", !0),
-				v.value ? (w(), p(l, { key: 4 }, [v.value.rowCount ? (w(), d(Gn, {
+				}, j(e.label), 9, ir))), 128))])) : f("", !0),
+				v.value ? (w(), p(l, { key: 4 }, [v.value.rowCount ? (w(), d(Kn, {
 					key: 1,
 					data: v.value,
 					busy: i.value,
 					onTurn: y
-				}, null, 8, ["data", "busy"])) : (w(), p("p", ir, "No rows."))], 64)) : f("", !0)
+				}, null, 8, ["data", "busy"])) : (w(), p("p", ar, "No rows."))], 64)) : f("", !0)
 			]))]),
 			_: 1
 		}));
 	}
-}, or = {
+}, sr = {
 	key: 0,
 	class: "flow-field"
-}, sr = ["for"], cr = { class: "flow-assist" }, lr = [
+}, cr = ["for"], lr = { class: "flow-assist" }, ur = [
 	"id",
 	"placeholder",
 	"aria-describedby"
-], ur = ["aria-disabled"], dr = ["id"], fr = {
+], dr = ["aria-disabled"], fr = ["id"], pr = {
 	key: 0,
 	class: "flow-field-hint"
-}, pr = {
+}, mr = {
 	key: 1,
 	class: "flow-field-error"
-}, mr = {
+}, hr = {
 	key: 2,
 	class: "flow-field-note"
-}, hr = { class: "flow-field-hint" }, gr = {
+}, gr = { class: "flow-field-hint" }, _r = {
 	__name: "AssistantField",
 	props: {
 		node: {
@@ -2649,7 +2656,7 @@ var un = {
 		}
 	},
 	setup(e) {
-		let t = e, n = _(q), r = u(() => n.server.value.assistant), i = D(""), a = D(null), o = D(""), s = D(""), c = D(null), l = u(() => a.value !== null), d = u(() => !l.value && !!i.value.trim()), g = u(() => !!c.value && t.code === c.value.written);
+		let t = e, n = _(J), r = u(() => n.server.value.assistant), i = D(""), a = D(null), o = D(""), s = D(""), c = D(null), l = u(() => a.value !== null), d = u(() => !l.value && !!i.value.trim()), g = u(() => !!c.value && t.code === c.value.written);
 		async function v() {
 			if (!d.value) return;
 			let e = t.node, r = t.code;
@@ -2682,12 +2689,12 @@ var un = {
 			request: `${S}-request`,
 			note: `${S}-note`
 		};
-		return (t, n) => r.value ? (w(), p("div", or, [
+		return (t, n) => r.value ? (w(), p("div", sr, [
 			m("label", {
 				class: "flow-field-label",
 				for: C.request
-			}, "Assistant", 8, sr),
-			m("div", cr, [I(m("textarea", {
+			}, "Assistant", 8, cr),
+			m("div", lr, [I(m("textarea", {
 				id: C.request,
 				"onUpdate:modelValue": n[0] ||= (e) => i.value = e,
 				class: "flow-field-input flow-assist-input",
@@ -2695,25 +2702,25 @@ var un = {
 				placeholder: `Say what the ${e.language} should do`,
 				"aria-describedby": C.note,
 				onKeydown: b
-			}, null, 40, lr), [[te, i.value]]), m("button", {
+			}, null, 40, ur), [[te, i.value]]), m("button", {
 				type: "button",
 				class: "flow-button",
 				"aria-disabled": !d.value,
 				onClick: v
-			}, j(l.value ? "Writing…" : "Write"), 9, ur)]),
+			}, j(l.value ? "Writing…" : "Write"), 9, dr)]),
 			m("div", {
 				id: C.note,
 				class: "flow-assist-status",
 				"aria-live": "polite"
-			}, [l.value ? (w(), p("p", fr, j(a.value === "reading" ? "Reading its inputs…" : `Writing with ${r.value.model}…`), 1)) : s.value ? (w(), p("p", pr, j(s.value), 1)) : o.value ? (w(), p("p", mr, [h(j(o.value) + " ", 1), g.value ? (w(), p("button", {
+			}, [l.value ? (w(), p("p", pr, j(a.value === "reading" ? "Reading its inputs…" : `Writing with ${r.value.model}…`), 1)) : s.value ? (w(), p("p", mr, j(s.value), 1)) : o.value ? (w(), p("p", hr, [h(j(o.value) + " ", 1), g.value ? (w(), p("button", {
 				key: 0,
 				type: "button",
 				class: "flow-suggestion",
 				onClick: y
-			}, "Undo")) : f("", !0)])) : f("", !0), m("p", hr, j(x.value) + " Check what it writes before you run it.", 1)], 8, dr)
+			}, "Undo")) : f("", !0)])) : f("", !0), m("p", gr, j(x.value) + " Check what it writes before you run it.", 1)], 8, fr)
 		])) : f("", !0);
 	}
-}, _r = { key: 0 }, vr = {
+}, vr = { key: 0 }, yr = {
 	__name: "FieldText",
 	props: { text: {
 		type: String,
@@ -2724,39 +2731,39 @@ var un = {
 			part: e,
 			code: t % 2 == 1
 		})));
-		return (e, t) => (w(!0), p(l, null, O(n.value, ({ part: e, code: t }, n) => (w(), p(l, { key: n }, [t ? (w(), p("code", _r, j(e), 1)) : (w(), p(l, { key: 1 }, [h(j(e), 1)], 64))], 64))), 128));
+		return (e, t) => (w(!0), p(l, null, O(n.value, ({ part: e, code: t }, n) => (w(), p(l, { key: n }, [t ? (w(), p("code", vr, j(e), 1)) : (w(), p(l, { key: 1 }, [h(j(e), 1)], 64))], 64))), 128));
 	}
-}, yr = {
+}, br = {
 	key: 1,
 	class: "flow-field-check"
-}, br = ["checked"], xr = { class: "flow-field" }, Sr = {
+}, xr = ["checked"], Sr = { class: "flow-field" }, Cr = {
 	key: 1,
 	class: "flow-field-label"
-}, Cr = [
+}, wr = [
 	"type",
 	"min",
 	"max",
 	"step",
 	"placeholder",
 	"aria-invalid"
-], wr = [
+], Tr = [
 	"rows",
 	"placeholder",
 	"aria-invalid",
 	"onKeydown"
-], Tr = ["value"], Er = ["value"], Dr = ["accept", "disabled"], Or = {
+], Er = ["value"], Dr = ["value"], Or = ["accept", "disabled"], kr = {
 	key: 0,
 	class: "flow-field-error"
-}, kr = {
+}, Ar = {
 	key: 1,
 	class: "flow-field-error"
-}, Ar = {
+}, jr = {
 	key: 2,
 	class: "flow-field-hint"
-}, jr = {
+}, Mr = {
 	key: 3,
 	class: "flow-field-hint"
-}, Mr = {
+}, Nr = {
 	__name: "NodeField",
 	props: {
 		node: {
@@ -2774,7 +2781,7 @@ var un = {
 			python: "Python",
 			javascript: "JavaScript",
 			text: "Text"
-		}, r = _(q), i = u(() => [
+		}, r = _(J), i = u(() => [
 			"text",
 			"number",
 			"code"
@@ -2824,11 +2831,11 @@ var un = {
 		return (t, r) => e.field.type === "custom" ? (w(), d(k(e.field.component), {
 			key: 0,
 			node: e.node
-		}, null, 8, ["node"])) : e.field.type === "checkbox" ? (w(), p("label", yr, [h(j(e.field.label) + " ", 1), m("input", {
+		}, null, 8, ["node"])) : e.field.type === "checkbox" ? (w(), p("label", br, [h(j(e.field.label) + " ", 1), m("input", {
 			type: "checkbox",
 			checked: !!o.value,
 			onChange: r[0] ||= (e) => A(e.target.checked)
-		}, null, 40, br)])) : (w(), p(l, { key: 2 }, [e.field.type === "code" && e.field.assistant ? (w(), d(gr, {
+		}, null, 40, xr)])) : (w(), p(l, { key: 2 }, [e.field.type === "code" && e.field.assistant ? (w(), d(_r, {
 			key: e.node.id,
 			node: e.node,
 			code: s.value,
@@ -2839,8 +2846,8 @@ var un = {
 			"code",
 			"field",
 			"language"
-		])) : f("", !0), m("div", xr, [
-			e.field.type === "file" ? (w(), p("span", Sr, j(e.field.label), 1)) : (w(), p("label", {
+		])) : f("", !0), m("div", Sr, [
+			e.field.type === "file" ? (w(), p("span", Cr, j(e.field.label), 1)) : (w(), p("label", {
 				key: 0,
 				class: "flow-field-label",
 				for: U
@@ -2864,8 +2871,8 @@ var un = {
 				spellcheck: "false",
 				onInput: r[2] ||= (e) => c.value = "",
 				onBlur: T,
-				onKeydown: r[3] ||= L((...e) => M(J) && M(J)(...e), ["enter"])
-			}, null, 42, Cr)), [[ee, s.value]]) : e.field.type === "code" ? I((w(), p("textarea", {
+				onKeydown: r[3] ||= L((...e) => M(Y) && M(Y)(...e), ["enter"])
+			}, null, 42, wr)), [[ee, s.value]]) : e.field.type === "code" ? I((w(), p("textarea", {
 				key: 3,
 				id: U,
 				"onUpdate:modelValue": r[4] ||= (e) => s.value = e,
@@ -2877,7 +2884,7 @@ var un = {
 				"aria-describedby": W,
 				onBlur: T,
 				onKeydown: [L(ne(E, ["ctrl", "prevent"]), ["enter"]), L(ne(E, ["meta", "prevent"]), ["enter"])]
-			}, null, 42, wr)), [[te, s.value]]) : e.field.type === "select" ? (w(), p("select", {
+			}, null, 42, Tr)), [[te, s.value]]) : e.field.type === "select" ? (w(), p("select", {
 				key: 4,
 				id: U,
 				class: b(["flow-field-input flow-field-select", { "is-invalid": B.value }]),
@@ -2887,7 +2894,7 @@ var un = {
 			}, [(w(!0), p(l, null, O(V.value, (e) => (w(), p("option", {
 				key: e.value,
 				value: e.value
-			}, j(e.label), 9, Er))), 128))], 42, Tr)) : e.field.type === "file" ? (w(), p("label", {
+			}, j(e.label), 9, Dr))), 128))], 42, Er)) : e.field.type === "file" ? (w(), p("label", {
 				key: 5,
 				class: b(["flow-file", { "is-busy": H.value }])
 			}, [m("input", {
@@ -2898,54 +2905,54 @@ var un = {
 				disabled: H.value,
 				"aria-describedby": W,
 				onChange: F
-			}, null, 40, Dr), h(" " + j(H.value ? "Reading…" : o.value ? "Choose another file…" : "Choose file…"), 1)], 2)) : e.field.type === "readonly" ? (w(), p("p", {
+			}, null, 40, Or), h(" " + j(H.value ? "Reading…" : o.value ? "Choose another file…" : "Choose file…"), 1)], 2)) : e.field.type === "readonly" ? (w(), p("p", {
 				key: 6,
 				id: U,
 				class: "flow-field-readonly"
 			}, j(e.field.value?.(z.value) ?? ""), 1)) : f("", !0),
 			m("div", { id: W }, [
-				c.value ? (w(), p("p", Or, j(c.value), 1)) : f("", !0),
-				v.value ? (w(), p("p", kr, j(v.value), 1)) : f("", !0),
+				c.value ? (w(), p("p", kr, j(c.value), 1)) : f("", !0),
+				v.value ? (w(), p("p", Ar, j(v.value), 1)) : f("", !0),
 				(w(!0), p(l, null, O(re.value, (e) => (w(), p("p", {
 					key: e.message,
 					class: b(e.severity === "warn" ? "flow-field-warning" : "flow-field-error")
 				}, j(e.message), 3))), 128)),
-				e.field.type === "file" && o.value ? (w(), p("p", Ar, j(o.value.fileName) + " · " + j(M(me)(o.value.fileSize)), 1)) : f("", !0),
-				ie.value ? (w(), p("p", jr, [g(vr, { text: ie.value }, null, 8, ["text"])])) : f("", !0)
+				e.field.type === "file" && o.value ? (w(), p("p", jr, j(o.value.fileName) + " · " + j(M(me)(o.value.fileSize)), 1)) : f("", !0),
+				ie.value ? (w(), p("p", Mr, [g(yr, { text: ie.value }, null, 8, ["text"])])) : f("", !0)
 			])
 		])], 64));
 	}
-}, Nr = { class: "flow-props" }, Pr = { class: "flow-field" }, Fr = ["for"], Ir = [
+}, Pr = { class: "flow-props" }, Fr = { class: "flow-field" }, Ir = ["for"], Lr = [
 	"id",
 	"aria-invalid",
 	"aria-describedby"
-], Lr = ["id"], Rr = {
+], Rr = ["id"], zr = {
 	key: 0,
 	class: "flow-field-error"
-}, zr = { class: "flow-field-hint" }, Br = { class: "flow-field" }, Vr = ["for"], Hr = ["id", "placeholder"], Ur = {
+}, Br = { class: "flow-field-hint" }, Vr = { class: "flow-field" }, Hr = ["for"], Ur = ["id", "placeholder"], Wr = {
 	key: 0,
 	class: "flow-field"
-}, Wr = ["for"], Gr = { class: "flow-field-prefixed" }, Kr = {
+}, Gr = ["for"], Kr = { class: "flow-field-prefixed" }, qr = {
 	class: "flow-field-prefix",
 	"aria-hidden": "true"
-}, qr = [
+}, Jr = [
 	"id",
 	"aria-invalid",
 	"aria-describedby"
-], Jr = ["id"], Yr = { class: "flow-field-check" }, Xr = ["checked"], Zr = { class: "flow-field" }, Qr = { class: "flow-actions" }, $r = ["aria-disabled"], ei = { class: "flow-field-hint" }, ti = {
+], Yr = ["id"], Xr = { class: "flow-field-check" }, Zr = ["checked"], Qr = { class: "flow-field" }, $r = { class: "flow-actions" }, ei = ["aria-disabled"], ti = { class: "flow-field-hint" }, ni = {
 	key: 2,
 	class: "flow-field-note is-warning"
-}, ni = {
+}, ri = {
 	key: 3,
 	class: "flow-field-hint"
-}, ri = {
+}, ii = {
 	__name: "NodeProperties",
 	props: { node: {
 		type: Object,
 		required: !0
 	} },
 	setup(e) {
-		let t = e, n = _(q), r = u(() => Q(t.node.data.kind)), i = u(() => n.run.status[t.node.id]), a = u(() => i.value === "running"), o = u(() => {
+		let t = e, n = _(J), r = u(() => Q(t.node.data.kind)), i = u(() => n.run.status[t.node.id]), a = u(() => i.value === "running"), o = u(() => {
 			let e = It(t.node.data);
 			return (r.value.fields ?? []).filter((t) => !t.visible || t.visible(e));
 		}), s = D(""), c = D(""), g = D(""), v = D(""), y = D(""), x = null;
@@ -2971,11 +2978,11 @@ var un = {
 			S() && (y.value = n.setOutputName(x.id, v.value) ?? "", y.value || (v.value = x.data.outputSuffix ?? ""));
 		}
 		let k = u(() => {
-			let e = Yt(t.node.id, t.node.data), n = t.node.data.ingest;
+			let e = Xt(t.node.id, t.node.data), n = t.node.data.ingest;
 			if (!n || !G[n.format].multi) return `this node's data as “${e}”`;
 			let r = n.tables.map((t) => `“${e}.${t.name}”`);
 			return `this node's tables as ${r.slice(0, 3).join(", ")}${r.length > 3 ? ", …" : ""}`;
-		}), A = u(() => t.node.data.autoRun !== !1), ee = (e) => n.updateData(t.node.id, { autoRun: e.target.checked ? void 0 : !1 }), F = u(() => t.node.data.sqlServerTables ?? []), ne = u(() => Zt(t.node.data)), R = n.server, z = u(() => ne.value && R.value.state !== "connected"), re = u(() => {
+		}), A = u(() => t.node.data.autoRun !== !1), ee = (e) => n.updateData(t.node.id, { autoRun: e.target.checked ? void 0 : !1 }), F = u(() => t.node.data.sqlServerTables ?? []), ne = u(() => Qt(t.node.data)), R = n.server, z = u(() => ne.value && R.value.state !== "connected"), re = u(() => {
 			if (r.value.canRun) {
 				let e = r.value.canRun(It(t.node.data));
 				if (e) return e;
@@ -2989,12 +2996,12 @@ var un = {
 			output: `${V}-output`,
 			outputNote: `${V}-output-note`
 		};
-		return (t, u) => (w(), p("div", Nr, [
-			m("div", Pr, [
+		return (t, u) => (w(), p("div", Pr, [
+			m("div", Fr, [
 				m("label", {
 					class: "flow-field-label",
 					for: H.id
-				}, "ID", 8, Fr),
+				}, "ID", 8, Ir),
 				I(m("input", {
 					id: H.id,
 					"onUpdate:modelValue": u[0] ||= (e) => s.value = e,
@@ -3005,33 +3012,33 @@ var un = {
 					autocomplete: "off",
 					onInput: u[1] ||= (e) => c.value = "",
 					onBlur: C,
-					onKeydown: u[2] ||= L((...e) => M(J) && M(J)(...e), ["enter"])
-				}, null, 42, Ir), [[te, s.value]]),
-				m("div", { id: H.idNote }, [c.value ? (w(), p("p", Rr, j(c.value), 1)) : f("", !0), m("p", zr, " Downstream nodes reference " + j(k.value) + ". Renaming doesn't update that text inside other nodes' queries or code — you'll need to update those yourself. ", 1)], 8, Lr)
+					onKeydown: u[2] ||= L((...e) => M(Y) && M(Y)(...e), ["enter"])
+				}, null, 42, Lr), [[te, s.value]]),
+				m("div", { id: H.idNote }, [c.value ? (w(), p("p", zr, j(c.value), 1)) : f("", !0), m("p", Br, " Downstream nodes reference " + j(k.value) + ". Renaming doesn't update that text inside other nodes' queries or code — you'll need to update those yourself. ", 1)], 8, Rr)
 			]),
-			m("div", Br, [m("label", {
+			m("div", Vr, [m("label", {
 				class: "flow-field-label",
 				for: H.label
-			}, "Name", 8, Vr), I(m("input", {
+			}, "Name", 8, Hr), I(m("input", {
 				id: H.label,
 				"onUpdate:modelValue": u[3] ||= (e) => g.value = e,
 				class: "flow-field-input",
 				placeholder: r.value.label,
 				autocomplete: "off",
 				onBlur: T,
-				onKeydown: u[4] ||= L((...e) => M(J) && M(J)(...e), ["enter"])
-			}, null, 40, Hr), [[te, g.value]])]),
-			(w(!0), p(l, null, O(o.value, (t, n) => (w(), d(Mr, {
+				onKeydown: u[4] ||= L((...e) => M(Y) && M(Y)(...e), ["enter"])
+			}, null, 40, Ur), [[te, g.value]])]),
+			(w(!0), p(l, null, O(o.value, (t, n) => (w(), d(Nr, {
 				key: t.key ?? `custom-${n}`,
 				node: e.node,
 				field: t
 			}, null, 8, ["node", "field"]))), 128)),
-			r.value.outputName ? (w(), p("div", Ur, [
+			r.value.outputName ? (w(), p("div", Wr, [
 				m("label", {
 					class: "flow-field-label",
 					for: H.output
-				}, "Output Name", 8, Wr),
-				m("div", Gr, [m("span", Kr, j(e.node.id) + "_", 1), I(m("input", {
+				}, "Output Name", 8, Gr),
+				m("div", Kr, [m("span", qr, j(e.node.id) + "_", 1), I(m("input", {
 					id: H.output,
 					"onUpdate:modelValue": u[5] ||= (e) => v.value = e,
 					class: b(["flow-field-input flow-field-input--mono", { "is-invalid": y.value }]),
@@ -3042,13 +3049,13 @@ var un = {
 					"aria-describedby": H.outputNote,
 					onInput: u[6] ||= (e) => y.value = "",
 					onBlur: E,
-					onKeydown: u[7] ||= L((...e) => M(J) && M(J)(...e), ["enter"])
-				}, null, 42, qr), [[te, v.value]])]),
+					onKeydown: u[7] ||= L((...e) => M(Y) && M(Y)(...e), ["enter"])
+				}, null, 42, Jr), [[te, v.value]])]),
 				y.value ? (w(), p("p", {
 					key: 0,
 					id: H.outputNote,
 					class: "flow-field-error"
-				}, j(y.value), 9, Jr)) : f("", !0)
+				}, j(y.value), 9, Yr)) : f("", !0)
 			])) : f("", !0),
 			r.value.runs ? (w(), p(l, { key: 1 }, [
 				ne.value ? (w(), p("p", {
@@ -3059,33 +3066,33 @@ var un = {
 					h(" running this node sends its input data to the server" + j(M(R).state === "connected" && M(R).address ? ` at ${M(R).address}` : "") + " to complete. ", 1),
 					z.value ? (w(), p(l, { key: 2 }, [h("The server isn't available, so it can't run now.")], 64)) : f("", !0)
 				], 2)) : f("", !0),
-				m("label", Yr, [u[10] ||= h(" Auto Run ", -1), m("input", {
+				m("label", Xr, [u[10] ||= h(" Auto Run ", -1), m("input", {
 					type: "checkbox",
 					checked: A.value,
 					onChange: ee
-				}, null, 40, Xr)]),
-				m("div", Zr, [m("div", Qr, [m("button", {
+				}, null, 40, Zr)]),
+				m("div", Qr, [m("div", $r, [m("button", {
 					type: "button",
 					class: "flow-button flow-button--wide",
 					"aria-disabled": !B.value,
 					onClick: u[8] ||= (t) => B.value && M(n).runNode(e.node.id)
-				}, j(a.value ? "Running…" : "Run"), 9, $r), i.value && !a.value ? (w(), p("button", {
+				}, j(a.value ? "Running…" : "Run"), 9, ei), i.value && !a.value ? (w(), p("button", {
 					key: 0,
 					type: "button",
 					class: "flow-button flow-button--quiet",
 					title: "Back to not run: clears its status and output",
 					onClick: u[9] ||= (t) => M(n).resetNode(e.node.id)
-				}, " Reset ")) : f("", !0)]), m("p", ei, j(re.value ?? ie.value), 1)])
-			], 64)) : r.value.unknown ? (w(), p("p", ti, " This node is a " + j(e.node.data.kind) + " node, which isn't available here: it was made in another app, or with a plugin this app doesn't install, or its kind comes from a server that isn't connected. It can't run or take new wires here, but it keeps its settings and wires, and saving the graph keeps it as it was. ", 1)) : (w(), p("p", ni, "No editable properties yet for this node kind."))
+				}, " Reset ")) : f("", !0)]), m("p", ti, j(re.value ?? ie.value), 1)])
+			], 64)) : r.value.unknown ? (w(), p("p", ni, " This node is a " + j(e.node.data.kind) + " node, which isn't available here: it was made in another app, or with a plugin this app doesn't install, or its kind comes from a server that isn't connected. It can't run or take new wires here, but it keeps its settings and wires, and saving the graph keeps it as it was. ", 1)) : (w(), p("p", ri, "No editable properties yet for this node kind."))
 		]));
 	}
-}, ii = {
+}, ai = {
 	key: 1,
 	class: "flow-panel-empty"
-}, ai = {
+}, oi = {
 	__name: "ManagePanel",
 	setup(e) {
-		let t = _(q);
+		let t = _(J);
 		return (e, n) => (w(), d(c, {
 			class: "manage-panel",
 			name: "manage",
@@ -3093,17 +3100,17 @@ var un = {
 			dock: "right",
 			hotkey: "M"
 		}, {
-			default: F(() => [M(t).selectedNode.value ? (w(), d(ri, {
+			default: F(() => [M(t).selectedNode.value ? (w(), d(ii, {
 				key: 0,
 				node: M(t).selectedNode.value
-			}, null, 8, ["node"])) : (w(), p("p", ii, "Select a node to see its properties."))]),
+			}, null, 8, ["node"])) : (w(), p("p", ai, "Select a node to see its properties."))]),
 			_: 1
 		}));
 	}
-}, oi = {
+}, si = {
 	__name: "ServerStatus",
 	setup(e) {
-		let t = _(q), n = t.server, r = u(() => n.value.state === "connected"), i = u(() => r.value && t.flow.nodes.value.some((e) => Zt(e.data)));
+		let t = _(J), n = t.server, r = u(() => n.value.state === "connected"), i = u(() => r.value && t.flow.nodes.value.some((e) => Qt(e.data)));
 		return (e, t) => M(n).state === "checking" ? f("", !0) : (w(), p("div", {
 			key: 0,
 			class: b(["flow-server-status", r.value ? "flow-node--modify" : "flow-node--fetch"]),
@@ -3113,14 +3120,14 @@ var un = {
 			"aria-hidden": "true"
 		}, null, 2), r.value ? (w(), p(l, { key: 0 }, [h(" LIVE · connected to server" + j(M(n).address ? ` ${M(n).address}` : ""), 1)], 64)) : (w(), p(l, { key: 1 }, [h("backend not available, client execution only")], 64))], 2));
 	}
-}, si = 400;
-function ci(e, t) {
+}, ci = 400;
+function li(e, t) {
 	let n = null, r = null;
 	function i() {
 		n && (clearTimeout(n), n = null, t.save(e.snapshot.value));
 	}
 	function a() {
-		clearTimeout(n), n = setTimeout(i, si);
+		clearTimeout(n), n = setTimeout(i, ci);
 	}
 	let o = () => document.visibilityState === "hidden" && i();
 	C(async () => {
@@ -3131,35 +3138,35 @@ function ci(e, t) {
 }
 //#endregion
 //#region lib/themes.js
-var li = [
+var ui = [
 	"FLOW",
 	"FLOWDARK",
 	"LUX",
 	"LUXDARK"
-], ui = new Map(li.map((e) => [e, {
+], di = new Map(ui.map((e) => [e, {
 	name: e,
 	base: null,
 	tokens: {}
 }])), $ = (e) => String(e).toUpperCase();
-function di({ name: e, base: t = "FLOW", tokens: n = {} }) {
+function fi({ name: e, base: t = "FLOW", tokens: n = {} }) {
 	if (!e) throw Error("A theme needs a name.");
-	if (li.includes($(e))) throw Error(`${$(e)} is a built-in theme; give yours another name.`);
-	if (!ui.has($(t))) throw Error(`Theme ${$(e)} is based on ${$(t)}, which isn't defined.`);
-	ui.set($(e), {
+	if (ui.includes($(e))) throw Error(`${$(e)} is a built-in theme; give yours another name.`);
+	if (!di.has($(t))) throw Error(`Theme ${$(e)} is based on ${$(t)}, which isn't defined.`);
+	di.set($(e), {
 		name: $(e),
 		base: $(t),
 		tokens: { ...n }
 	});
 }
-var fi = (e) => ui.has($(e)), pi = () => [...ui.keys()];
-function mi(e) {
-	let t = ui.get($(e)) ?? ui.get("FLOW");
+var pi = (e) => di.has($(e)), mi = () => [...di.keys()];
+function hi(e) {
+	let t = di.get($(e)) ?? di.get("FLOW");
 	if (!t.base) return {
 		name: t.name,
 		className: `flow-theme-${t.name.toLowerCase()}`,
 		tokens: {}
 	};
-	let n = mi(t.base);
+	let n = hi(t.base);
 	return {
 		name: t.name,
 		className: n.className,
@@ -3171,7 +3178,7 @@ function mi(e) {
 }
 //#endregion
 //#region widgets/FlowgraphEditor.vue
-var hi = { class: "flow-title flow-pan-trigger" }, gi = { class: "flow-brand-text flow-title-text" }, _i = {
+var gi = { class: "flow-title flow-pan-trigger" }, _i = { class: "flow-brand-text flow-title-text" }, vi = {
 	__name: "FlowgraphEditor",
 	props: {
 		storage: {
@@ -3193,7 +3200,7 @@ var hi = { class: "flow-title flow-pan-trigger" }, gi = { class: "flow-brand-tex
 		theme: {
 			type: String,
 			default: "FLOW",
-			validator: fi
+			validator: pi
 		},
 		autoHideRails: {
 			type: Boolean,
@@ -3201,12 +3208,12 @@ var hi = { class: "flow-title flow-pan-trigger" }, gi = { class: "flow-brand-tex
 		}
 	},
 	setup(t) {
-		let n = t, r = u(() => mi(n.theme)), a = u(() => r.value.className), o = u(() => r.value.tokens), c = s({ autoHideRails: () => n.autoHideRails }), l = Ye({
+		let n = t, r = u(() => hi(n.theme)), a = u(() => r.value.className), o = u(() => r.value.tokens), c = s({ autoHideRails: () => n.autoHideRails }), l = Ye({
 			sql: n.sql,
 			files: n.storage,
 			server: n.server
 		});
-		T(q, l), ci(l, n.storage);
+		T(J, l), li(l, n.storage);
 		let { commands: f, canvasMenu: p } = pt(c, l), h = D(null), _ = (e) => !!e.target.closest(".wm-content");
 		function v(e) {
 			_(e) || l.onKeydown(e);
@@ -3228,16 +3235,16 @@ var hi = { class: "flow-title flow-pan-trigger" }, gi = { class: "flow-brand-tex
 			style: x(o.value),
 			onKeydown: v
 		}, {
-			title: F(() => [m("span", hi, [m("span", gi, j(t.title), 1)])]),
+			title: F(() => [m("span", gi, [m("span", _i, j(t.title), 1)])]),
 			panels: F(() => [
-				g(kn),
-				g(Pn),
-				g(Rn),
-				g(ar),
-				g(ai),
-				g(oi)
+				g(An),
+				g(Fn),
+				g(zn),
+				g(or),
+				g(oi),
+				g(si)
 			]),
-			default: F(() => [I(g(Tn, { onConnectionDropped: y }, null, 512), [[M(e), M(p)]])]),
+			default: F(() => [I(g(En, { onConnectionDropped: y }, null, 512), [[M(e), M(p)]])]),
 			_: 1
 		}, 8, [
 			"class",
@@ -3249,4 +3256,4 @@ var hi = { class: "flow-title flow-pan-trigger" }, gi = { class: "flow-brand-tex
 	}
 };
 //#endregion
-export { q as FLOW_GRAPH, c as FlowPanel, _i as FlowgraphEditor, wt as NODE_CATEGORIES, Y as NODE_KINDS, a as PANEL_LAYOUT, o as PANEL_MENU, i as PanelHost, s as createPanelLayout, At as defineNodeCategory, X as defineNodeKind, di as defineTheme, r as panelCommands, t as panelsSubmenu, mi as resolveTheme, pi as themeNames };
+export { J as FLOW_GRAPH, c as FlowPanel, vi as FlowgraphEditor, wt as NODE_CATEGORIES, X as NODE_KINDS, a as PANEL_LAYOUT, o as PANEL_MENU, i as PanelHost, s as createPanelLayout, At as defineNodeCategory, Z as defineNodeKind, fi as defineTheme, r as panelCommands, t as panelsSubmenu, hi as resolveTheme, mi as themeNames };

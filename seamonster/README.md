@@ -316,7 +316,8 @@ SQL:
   table of several, typed or chosen from a list (an editor menu, badged by
   category, like the right-click ones; Alt+Down opens it). It downloads when
   the node itself is run, not when it runs upstream of another, and passes the
-  input on unchanged. DuckDB-wasm's xlsx files come out with a stray byte ahead
+  input on unchanged. A table that came with GeoParquet `geo` metadata (below)
+  is written with it. DuckDB-wasm's xlsx files come out with a stray byte ahead
   of the zip, which Excel calls corrupt; `repairXlsx` cuts it (and leaves a
   correct file alone).
 - **JavaScript** runs its code in [jsSandbox.js](lib/jsSandbox.js):
@@ -332,6 +333,13 @@ SQL:
   failure fails too.
 - Results are pages of 100 rows plus a count; the Data panel's pager re-runs
   the node for another page.
+- **A geometry's CRS travels with its table** as GeoParquet `geo` metadata
+  (each geometry column's encoding and CRS), through the browser as well as
+  on the wire. DuckDB keeps a Parquet file's rows but not its metadata, so
+  the runner keeps the `geo` of each table loaded with some (a server kind's
+  output, a GeoParquet file read by DataIngest) and writes it back whenever
+  that table goes out as Parquet again: to a server kind, to PythonScript, or
+  from DataExport. A SQL query's output doesn't carry it yet (roadmap 8g).
 
 Run state lives in the graph store (`run`), not in the saved document:
 statuses and results start empty whenever a graph is opened. A status is
@@ -406,6 +414,7 @@ colour (`label`, white by default).
 | `slotTable(slot, name?)` | the same, for one of its other slots |
 | `rows(input)` | an input's rows as objects by column (an object of them by table name, for several) |
 | `parquet()` | the inputs as Parquet, `[{ name, bytes }]`, named as the node reads them, for sending to a server |
+| `parquetOf(table)` | one table as Parquet (bytes) |
 | `loadParquet(table, bytes)`, `loadRows(table, rows)` | create a table from Parquet, or from rows |
 | `serverTables(query)` | the tables a query reads that no input supplies |
 
@@ -502,8 +511,16 @@ defineNodeKind({
   Terminal lists the other slots' sizes after a run. Output Name can't take
   the name of another of the node's slots.
 - A saved graph's wires carry their handles, and the server's whole-graph
-  runs (`/execute`) don't read them yet: there they see each node's first
-  slot only. No kind that runs on the server has other slots so far.
+  runs (`/execute`) read them as the browser does: a wire from the main pin
+  brings every slot, one from a slot's own pin (`source:<slot>`) just that
+  slot, and one into a named input pin (`target:<name>`) says so in the
+  input's `pin`. There, only the kinds the server defines have slots beyond
+  the first (the engine's README, "The app's node kinds").
+- **One wire can bring a named input pin several tables.** A named pin
+  takes one wire, not one table, so a wire from a node's main pin brings
+  every slot of that node through it, each with that `pin`. A kind that
+  wants one table there picks it (by slot, or by what's in it), or the user
+  wires the slot's own pin instead.
 
 ## AI assistant
 

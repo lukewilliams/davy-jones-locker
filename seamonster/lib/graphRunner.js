@@ -21,6 +21,10 @@ const LOCAL_SCHEMAS = new Set(['information_schema', 'pg_catalog'])
 
 const message = (e) => e?.message ?? String(e)
 
+// COPY's options for Parquet, with GeoParquet's `geo` metadata (text) when
+// there's some.
+const parquetOptions = (geo) => (geo ? `FORMAT parquet, KV_METADATA {geo: ${literal(geo)}}` : 'FORMAT parquet')
+
 function walk(value, visit) {
   if (Array.isArray(value)) value.forEach((v) => walk(v, visit))
   else if (value && typeof value === 'object') {
@@ -68,7 +72,10 @@ function walk(value, visit) {
  *   parquet()         the inputs as Parquet, [{ name, bytes }], named as the
  *                     node reads them (dataingest1_data.sheet1 for one of
  *                     several tables)
+ *   parquetOf(table)  one table as Parquet (bytes)
  *   loadParquet(table, bytes), loadRows(table, rows)   create a table
+ *                     (Parquet in and out keeps GeoParquet's `geo` metadata:
+ *                     see geoMetadata below)
  *   serverTables(query)   the tables a query reads that no input supplies
  *
  * `run` returns (or resolves to) what it made, any of:
@@ -99,6 +106,12 @@ function walk(value, visit) {
 export function createGraphRunner(sql) {
   let queue = Promise.resolve()
   let inputSchemas = [] // schemas made for multi-table inputs, dropped before the next node
+  // GeoParquet's `geo` metadata (each geometry column's encoding and CRS), as
+  // text, by table, for the tables of this run that came from Parquet with it
+  // (a server kind's output, a GeoParquet file). DuckDB keeps a file's rows
+  // but not its metadata, so it's written back whenever the table goes out as
+  // Parquet again (to the server, or exported). A SQL query's output has none.
+  let geoMetadata = new Map()
 
   function queued(job) {
     const next = queue.then(job)
@@ -124,6 +137,7 @@ export function createGraphRunner(sql) {
     const { order, inputs } = upstreamOrder(doc, targetIds)
     await sql.query(`DROP SCHEMA IF EXISTS ${OUTPUTS} CASCADE`)
     await sql.query(`CREATE SCHEMA ${OUTPUTS}`)
+    geoMetadata = new Map()
 
     // Per node that ran: { table } or { tables: [{ name, label, table }] }.
     const outputs = new Map()
@@ -334,6 +348,7 @@ export function createGraphRunner(sql) {
       slotTable: (slot, name) => `${OUTPUTS}.${quote(name ? `${node.id}#${slot}/${name}` : `${node.id}#${slot}`)}`,
       rows: inputValue,
       parquet: () => parquetInputs(inputs),
+      parquetOf,
       loadParquet,
       loadRows,
       serverTables: (query) => serverTables(query, [...new Set(inputs.map((i) => i.ref))]),
@@ -389,9 +404,10 @@ export function createGraphRunner(sql) {
     return parts
   }
 
+  // A table as Parquet, with its `geo` metadata if it came with some.
   async function parquetOf(table) {
     const path = `flow-send-${Date.now()}-${Math.random().toString(36).slice(2)}.parquet`
-    await copyTo(sql, `SELECT * FROM ${table}`, path, 'FORMAT parquet')
+    await copyTo(sql, `SELECT * FROM ${table}`, path, parquetOptions(geoMetadata.get(table)))
     try {
       return await sql.readFile(path)
     } finally {
@@ -404,9 +420,19 @@ export function createGraphRunner(sql) {
     await sql.registerFile(path, bytes)
     try {
       await sql.query(`CREATE TABLE ${table} AS SELECT * FROM read_parquet(${literal(path)})`)
+      const geo = await geoOfFile(path)
+      if (geo) geoMetadata.set(table, geo)
     } finally {
       await sql.dropFile(path)
     }
+  }
+
+  // A registered Parquet file's `geo` metadata, as text, or null.
+  async function geoOfFile(path) {
+    const { rows } = await sql.query(
+      `SELECT decode(value) FROM parquet_kv_metadata(${literal(path)}) WHERE decode(key) = 'geo'`,
+    )
+    return rows[0]?.[0] ?? null
   }
 
   // Rows (objects by column) as a new table, by way of a JSON file DuckDB
@@ -479,6 +505,8 @@ export function createGraphRunner(sql) {
     await sql.registerFile(path, bytes)
     try {
       const sources = await tableQueries(format, path, bytes, fileName, scratch)
+      // A GeoParquet file's CRS is kept with its data.
+      const geo = format === 'parquet' ? await geoOfFile(path) : null
       const tables = []
       const used = []
       for (const [i, { label, select }] of sources.entries()) {
@@ -486,7 +514,7 @@ export function createGraphRunner(sql) {
         used.push(name)
         const out = `${path}-${i}.parquet`
         scratch.push(out)
-        const rowCount = await copyTo(sql, select, out, 'FORMAT parquet')
+        const rowCount = await copyTo(sql, select, out, parquetOptions(geo))
         tables.push({ name, label, rowCount, bytes: await sql.readFile(out) })
       }
       return tables

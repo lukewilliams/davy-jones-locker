@@ -299,7 +299,7 @@ def create_app(
     categories: list[nodes.NodeCategory] | None = None,
 ) -> FastAPI:
     """The engine as a FastAPI app. An app's entry point calls this, with its
-    own node kinds and their categories (see nodes.py), and from step 8f its
+    own node kinds and their categories (see nodes/), and from step 8f its
     own commands."""
     noderunner.register(nodes or [], categories or [])
     app = FastAPI(title=title, lifespan=lifespan)

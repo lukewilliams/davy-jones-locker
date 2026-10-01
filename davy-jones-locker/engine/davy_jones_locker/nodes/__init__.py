@@ -31,16 +31,22 @@ here needs no JavaScript. Everything about a kind is plain data for that
 reason: fields' hints are text, rules are declarative (no functions), and
 select options are a fixed list.
 
-A handler is given a context and returns what it made (see nodeworker/child.py):
+A handler is given a context (nodes/context.py) and returns what it made
+(see nodeworker/child.py):
 
     def run(ctx):
-        ctx.node          # the node's data, with its fields' defaults
-        ctx.inputs        # what's wired in: [Input(ref, id, slot, pin, table | tables)]
-        ctx.input(ref)    # one of them by reference name
-        ctx.file(key)     # the bytes of a file field's file (its stored key)
-        ctx.log(text)     # a line for the Terminal
+        ctx.node              # the node's data, with its fields' defaults
+        ctx.inputs            # what's wired in: [Input(ref, id, slot, pin, table | tables)]
+        ctx.input(ref)        # one of them by reference name
+        ctx.file_field(key)   # a file field's file: (its name, its bytes)
+        ctx.file(stored_key)  # the bytes of a file field's file, by its stored key
+        ctx.log(text)         # a line for the Terminal
         return {"table": pyarrow_table}   # or "tables": {name: table}, "value": JSON,
                                           # "slots": {slot: table or {name: table}}
+
+A problem the node's user can fix (a setting, a file, a wire) is a
+NodeError: its message alone is the node's error. Any other exception is
+shown with its traceback, as a bug. nodes/testing.py runs handlers in tests.
 """
 
 import re
@@ -60,6 +66,13 @@ BUILT_IN_CATEGORIES = {"fetch", "modify", "debug", "import", "export", "custom"}
 
 class DefinitionError(ValueError):
     """A node kind or category that can't be used, and why."""
+
+
+class NodeError(ValueError):
+    """A problem with what the node was given, which its user can fix: a
+    handler raises it with a message for them ("No layer called roads: the
+    file has rivers, lakes."), and that message alone is the node's error,
+    without a traceback. Subclass it for a handler's own kinds of error."""
 
 
 @dataclass(frozen=True)
