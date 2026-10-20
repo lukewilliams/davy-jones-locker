@@ -152,16 +152,21 @@ class NodeCategory:
 @dataclass(frozen=True)
 class NodeKind:
     """A node kind the engine runs (in the node worker). `handler` is
-    "module:function", imported only by the worker. `slots` are its outputs
-    beyond the first ([{"name", "label"?, "pin"?}]) and `input_pins` its
-    named input pins ([{"name", "label"?, "many"?}]), as SEAMONSTER has them.
-    `timeout_s` bounds a run; `network` asks for a way out, which the worker
-    doesn't have yet (roadmap 10e)."""
+    "module:function", imported only by the worker. `description` says what
+    it does (Manage shows it, and the Library on hover). `slots` are its
+    outputs beyond the first ([{"name", "label"?, "pin"?}]) and `input_pins`
+    its named input pins ([{"name", "label"?, "many"?, "hint"?,
+    "required"?}]: `hint` shows on the pin, and a `required` pin with
+    nothing wired in stops the node running), as SEAMONSTER has them.
+    `timeout_s` bounds a run; `network` says it needs a way out, which the
+    worker has only in local development (IS_LOCAL=true, where every kind has
+    one) until sign-in and roadmap 10e's proxy."""
 
     kind: str
     label: str
     category: str
     handler: str
+    description: str | None = None
     id_prefix: str | None = None
     fields: list[Field] = field(default_factory=list)
     slots: list[dict] = field(default_factory=list)
@@ -178,6 +183,8 @@ class NodeKind:
             "kind": self.kind, "label": self.label, "category": self.category, "where": "server",
             "outputName": self.output_name, "fields": [f.to_json() for f in self.fields],
         }
+        if self.description:
+            out["description"] = self.description
         if self.id_prefix:
             out["idPrefix"] = self.id_prefix
         if self.slots:
@@ -193,14 +200,23 @@ class NodeKind:
         defaults = {f.key: f.default for f in self.fields if f.default is not None}
         return {**defaults, **data}
 
-    def errors(self, data: dict) -> list[str]:
-        """What's wrong with a node's settings that stops it running."""
+    def errors(self, data: dict, pins=None) -> list[str]:
+        """What's wrong with a node that stops it running: its settings, and,
+        given `pins` (the named input pins its inputs came through, None for
+        the main pin), a required input pin with nothing wired in."""
         values = self.with_defaults(data)
-        return [
+        found = [
             f"{f.label}: {rule.message}"
             for f in self.fields for rule in f.validate
             if rule.severity == "error" and rule.broken(values.get(f.key))
         ]
+        if pins is not None:
+            wired = set(pins)
+            found += [
+                f"{p.get('label') or p['name']}: wire a node into this input first."
+                for p in self.input_pins if p.get("required") and p["name"] not in wired
+            ]
+        return found
 
     def slot_names(self, data: dict) -> list[str]:
         """Its slots beyond the first, leaving out one named like the first."""
@@ -208,8 +224,10 @@ class NodeKind:
         return [s["name"] for s in self.slots if s["name"] != first]
 
 
-def check(kinds: list[NodeKind], categories: list[NodeCategory]) -> None:
-    """Raise DefinitionError for anything the engine or the browser couldn't use."""
+def check(kinds: list[NodeKind], categories: list[NodeCategory], local: bool = False) -> None:
+    """Raise DefinitionError for anything the engine or the browser couldn't use.
+    `local`: the engine is in local development (IS_LOCAL), where the node
+    worker has a way out, so a kind may ask for one."""
     category_ids = set(BUILT_IN_CATEGORIES)
     for category in categories:
         if not re.match(r"^[a-z][a-z0-9-]*$", category.id) or category.id in category_ids:
@@ -228,10 +246,15 @@ def check(kinds: list[NodeKind], categories: list[NodeCategory]) -> None:
         names.add(kind.kind)
         if kind.category not in category_ids:
             raise DefinitionError(f"{where} is in category {kind.category!r}, which isn't defined.")
+        if kind.description is not None and not isinstance(kind.description, str):
+            raise DefinitionError(f"{where}'s description needs to be text.")
         if not HANDLER.match(kind.handler):
             raise DefinitionError(f"{where} needs a handler written module:function.")
-        if kind.network:
-            raise DefinitionError(f"{where} asks for network access, which the node worker doesn't give yet (roadmap 10e).")
+        if kind.network and not local:
+            raise DefinitionError(
+                f"{where} asks for network access, which the node worker gives only in local development "
+                "(IS_LOCAL=true) until the engine has sign-in (roadmap 8b part b and 10e)."
+            )
         keys = set()
         for f in kind.fields:
             if f.type not in FIELD_TYPES:
@@ -249,6 +272,10 @@ def check(kinds: list[NodeKind], categories: list[NodeCategory]) -> None:
                 if not PIN_NAME.match(name) or name in seen or (what == "slot" and name == "data"):
                     raise DefinitionError(f"{where} has a {what} named {name!r}: use distinct lowercase names (not data).")
                 seen.add(name)
+                if what == "input pin" and (
+                    not isinstance(pin.get("hint", ""), str) or not isinstance(pin.get("required", False), bool)
+                ):
+                    raise DefinitionError(f"{where}'s input pin {name} needs its hint to be text and required true or false.")
 
 
 def load(spec: str) -> list[NodeKind]:

@@ -1,7 +1,10 @@
 import { FILE_FORMATS } from './fileFormats.js'
-import { checkNode, isKnownKind, kindInfo, NODE_KINDS, referenceName, slotsOf, slotsThrough, toIdentifier, uniqueId, withDefaults } from './nodeKinds.js'
+import { crsOfType } from './geoExport.js'
+import { spatialWarnings } from './spatialChecks.js'
+import { checkNode, isKnownKind, kindInfo, NODE_KINDS, referenceName, slotsOf, slotsThrough, toIdentifier, uniqueId, unwiredPins, withDefaults } from './nodeKinds.js'
 import { copyTo, literal, loadExcel, quote } from './sqlText.js'
 import { xlsxSheetNames } from './xlsx.js'
+import { unzip } from './zip.js'
 
 // Rows per page of a node's output in the Data panel.
 export const PAGE_SIZE = 100
@@ -21,9 +24,44 @@ const LOCAL_SCHEMAS = new Set(['information_schema', 'pg_catalog'])
 
 const message = (e) => e?.message ?? String(e)
 
-// COPY's options for Parquet, with GeoParquet's `geo` metadata (text) when
-// there's some.
-const parquetOptions = (geo) => (geo ? `FORMAT parquet, KV_METADATA {geo: ${literal(geo)}}` : 'FORMAT parquet')
+// A column from crsOfType: geometry with a CRS, or with none (null).
+const isGeometryColumn = (column) => column.crs !== undefined
+
+// GeoPackage's placeholders for no CRS, as GDAL reports them (PROJJSON).
+function isUndefinedCrs(crs) {
+  if (!crs?.startsWith('{')) return false
+  try {
+    return /^Undefined (cartesian|geographic) SRS$/i.test(JSON.parse(crs).name)
+  } catch {
+    return false
+  }
+}
+
+// How much of a geometry's WKT Data shows on hover.
+const WKT_SHOWN = 2000
+
+// An area or length in metres as Data shows it: m² up to a hectare, then
+// hectares; m up to a kilometre, then km. '' for neither.
+function measure(area, length) {
+  const number = (v, digits) => v.toLocaleString('en', { maximumFractionDigits: digits })
+  if (area > 0) return area >= 10000 ? `${number(area / 10000, 2)} ha` : `${number(area, area < 10 ? 2 : 0)} m²`
+  if (length > 0) return length >= 1000 ? `${number(length / 1000, 2)} km` : `${number(length, length < 10 ? 2 : 0)} m`
+  return ''
+}
+
+// OGC:CRS84 as GeoParquet's PROJJSON (or a name) says it.
+const isCrs84 = (crs) => crs === 'OGC:CRS84' || (crs?.id?.authority === 'OGC' && String(crs.id.code) === 'CRS84')
+
+// A GeoParquet WKB column (`column`, quoted) as GEOMETRY with the CRS its
+// `geo` entry gives: none for a null `crs`, EPSG:4326 for CRS84 or no `crs`
+// (see readParquet), otherwise the PROJJSON, which DuckDB's spatial extension
+// names (EPSG:7855).
+function geometryOf(column, { crs } = {}) {
+  const geometry = `ST_GeomFromWKB(${column})`
+  if (crs === null) return geometry
+  if (crs === undefined || isCrs84(crs)) return `ST_SetCRS(${geometry}, 'EPSG:4326')`
+  return `ST_SetCRS(${geometry}, ${literal(typeof crs === 'string' ? crs : JSON.stringify(crs))})`
+}
 
 function walk(value, visit) {
   if (Array.isArray(value)) value.forEach((v) => walk(v, visit))
@@ -42,7 +80,11 @@ function walk(value, visit) {
  *                               files the engine's SQL reads and writes by name
  *                               (registerFile leaves `bytes` as they were)
  *   readSqlite(bytes)        -> Promise<[{ name, columns, rows }]>   (optional)
- *   writeSqlite(tables)      -> Promise<Uint8Array>                  (optional)
+ *   writeSqlite(tables, { statements })   -> Promise<Uint8Array>     (optional)
+ *                               tables [{ name, columns, rows, types? }];
+ *                               bytes are blobs; statements run after
+ *   loadSpatial()            -> Promise   DuckDB's spatial extension, before
+ *                               geometry is read from Parquet (optional)
  *
  * Running a node runs everything upstream of it first, in dependency order.
  * Each node runs through its kind's `run(ctx)` (see kindRegistry.js; the
@@ -74,9 +116,11 @@ function walk(value, visit) {
  *                     several tables)
  *   parquetOf(table)  one table as Parquet (bytes)
  *   loadParquet(table, bytes), loadRows(table, rows)   create a table
- *                     (Parquet in and out keeps GeoParquet's `geo` metadata:
- *                     see geoMetadata below)
+ *                     (Parquet in and out is GeoParquet when there's geometry,
+ *                     each column's CRS kept: see writeParquet below)
  *   serverTables(query)   the tables a query reads that no input supplies
+ *   spatialWarnings(query)   warnings about a query's spatial SQL: measuring
+ *                     in degrees, a dropped datum shift (spatialChecks.js)
  *
  * `run` returns (or resolves to) what it made, any of:
  *
@@ -88,6 +132,8 @@ function walk(value, visit) {
  *                     gets an empty table, as it does when there's no output
  *   export            { filename, contentType, size, bytes }: a file to save
  *   output            what it printed (text), for the Terminal
+ *   warnings          [text]: it ran, but something's likely wrong (the
+ *                     Terminal, and the node's badge)
  *   error             why it failed (or throw)
  *
  * and anything else it returns is kept on the result (PythonScript's
@@ -106,12 +152,6 @@ function walk(value, visit) {
 export function createGraphRunner(sql) {
   let queue = Promise.resolve()
   let inputSchemas = [] // schemas made for multi-table inputs, dropped before the next node
-  // GeoParquet's `geo` metadata (each geometry column's encoding and CRS), as
-  // text, by table, for the tables of this run that came from Parquet with it
-  // (a server kind's output, a GeoParquet file). DuckDB keeps a file's rows
-  // but not its metadata, so it's written back whenever the table goes out as
-  // Parquet again (to the server, or exported). A SQL query's output has none.
-  let geoMetadata = new Map()
 
   function queued(job) {
     const next = queue.then(job)
@@ -137,7 +177,6 @@ export function createGraphRunner(sql) {
     const { order, inputs } = upstreamOrder(doc, targetIds)
     await sql.query(`DROP SCHEMA IF EXISTS ${OUTPUTS} CASCADE`)
     await sql.query(`CREATE SCHEMA ${OUTPUTS}`)
-    geoMetadata = new Map()
 
     // Per node that ran: { table } or { tables: [{ name, label, table }] }.
     const outputs = new Map()
@@ -240,8 +279,11 @@ export function createGraphRunner(sql) {
     // no `run`: it runs through the server client's runNode.
     const run = definition.run ?? (definition.where === 'server' ? (ctx) => runOnServer(ctx, definition) : null)
     if (!run) return { error: `${definition.label} nodes can't run yet.` }
-    const errors = checkNode(node).filter((p) => p.severity === 'error')
-    if (errors.length) return { error: errors.map((p) => `${p.label}: ${p.message}`).join(' ') }
+    const errors = [
+      ...checkNode(node).filter((p) => p.severity === 'error').map((p) => `${p.label}: ${p.message}`),
+      ...unwiredPins(node, inputs.map((i) => (i.pin ? `target:${i.pin}` : 'target-0'))),
+    ]
+    if (errors.length) return { error: errors.join(' ') }
     const ctx = runContext(withDefaults(node), inputs, context)
     const { table, tables, slots: filled, error, ...made } = (await run(ctx)) ?? {}
     if (error) return { error, ...(made.output !== undefined ? { output: made.output } : {}) }
@@ -352,6 +394,7 @@ export function createGraphRunner(sql) {
       loadParquet,
       loadRows,
       serverTables: (query) => serverTables(query, [...new Set(inputs.map((i) => i.ref))]),
+      spatialWarnings: (query) => spatialWarnings(sql, query),
     }
   }
 
@@ -404,10 +447,10 @@ export function createGraphRunner(sql) {
     return parts
   }
 
-  // A table as Parquet, with its `geo` metadata if it came with some.
+  // A table as Parquet (GeoParquet when it has geometry).
   async function parquetOf(table) {
     const path = `flow-send-${Date.now()}-${Math.random().toString(36).slice(2)}.parquet`
-    await copyTo(sql, `SELECT * FROM ${table}`, path, parquetOptions(geoMetadata.get(table)))
+    await writeParquet(`SELECT * FROM ${table}`, path)
     try {
       return await sql.readFile(path)
     } finally {
@@ -415,24 +458,90 @@ export function createGraphRunner(sql) {
     }
   }
 
+  // A table from Parquet bytes (see readParquet).
   async function loadParquet(table, bytes) {
     const path = `flow-received-${Date.now()}-${Math.random().toString(36).slice(2)}.parquet`
     await sql.registerFile(path, bytes)
     try {
-      await sql.query(`CREATE TABLE ${table} AS SELECT * FROM read_parquet(${literal(path)})`)
-      const geo = await geoOfFile(path)
-      if (geo) geoMetadata.set(table, geo)
+      await readParquet(path, table)
     } finally {
       await sql.dropFile(path)
     }
   }
 
-  // A registered Parquet file's `geo` metadata, as text, or null.
+  // A registered Parquet file as a new table. GeoParquet's geometry becomes
+  // GEOMETRY columns with their CRS, read from its `geo` metadata here rather
+  // than by DuckDB, because DuckDB-wasm's spatial extension fails ("stoi: no
+  // conversion") on OGC:CRS84, which is what a column with no `crs` means.
+  // CRS84 is read as EPSG:4326, which in Flow's x, y order (longitude first)
+  // is the same coordinates; an explicit null `crs` stays unknown.
+  async function readParquet(path, table) {
+    const file = literal(path)
+    const geo = await geoOfFile(path)
+    if (!geo) {
+      await sql.query(`CREATE TABLE ${table} AS SELECT * FROM read_parquet(${file})`)
+      return
+    }
+    // Spatial first, when the engine has it: without it a CRS stays spelt out
+    // in full (PROJJSON), and counts as different from the same CRS by name.
+    try {
+      await sql.loadSpatial?.()
+    } catch {
+      // The table loads anyway; spatial SQL on it will say why it can't run.
+    }
+    await withoutGeoParquet(async () => {
+      const present = new Set((await sql.query(`DESCRIBE SELECT * FROM read_parquet(${file})`)).rows.map(([name]) => name))
+      const geometry = Object.entries(geo.columns ?? {})
+        .filter(([name, column]) => present.has(name) && String(column?.encoding).toUpperCase() === 'WKB')
+        .map(([name, column]) => `${geometryOf(quote(name), column)} AS ${quote(name)}`)
+      const replace = geometry.length ? ` REPLACE (${geometry.join(', ')})` : ''
+      await sql.query(`CREATE TABLE ${table} AS SELECT *${replace} FROM read_parquet(${file})`)
+    })
+  }
+
+  // A query's rows to a new Parquet file. DuckDB writes each GEOMETRY
+  // column's CRS in GeoParquet's `geo` metadata, so it travels with the
+  // table, but it leaves `crs` out for a column with none, and GeoParquet
+  // reads no `crs` as OGC:CRS84 (longitude/latitude). So when a column has
+  // no CRS, the file is written again with its `crs` an explicit null, which
+  // reads back as unknown. Resolves to the number of rows.
+  async function writeParquet(select, path) {
+    const rowCount = await copyTo(sql, select, path, 'FORMAT parquet')
+    const untagged = (await sql.query(`DESCRIBE ${select}`)).rows
+      .filter(([, type]) => String(type) === 'GEOMETRY')
+      .map(([name]) => name)
+    if (!untagged.length) return rowCount
+    const geo = (await geoOfFile(path)) ?? { version: '1.0.0', primary_column: untagged[0], columns: {} }
+    for (const name of untagged) geo.columns[name] = { encoding: 'WKB', geometry_types: [], ...geo.columns[name], crs: null }
+    await sql.dropFile(path)
+    await copyTo(sql, select, path, `FORMAT parquet, KV_METADATA {geo: ${literal(JSON.stringify(geo))}}`)
+    return rowCount
+  }
+
+  // A registered Parquet file's `geo` metadata (parsed), or null. DuckDB's
+  // GeoParquet reading is off for it, since it fails on CRS84 (see
+  // readParquet) even here.
   async function geoOfFile(path) {
-    const { rows } = await sql.query(
+    const { rows } = await withoutGeoParquet(() => sql.query(
       `SELECT decode(value) FROM parquet_kv_metadata(${literal(path)}) WHERE decode(key) = 'geo'`,
-    )
-    return rows[0]?.[0] ?? null
+    ))
+    try {
+      const geo = rows.length ? JSON.parse(rows[0][0]) : null
+      return geo && typeof geo === 'object' && geo.columns && typeof geo.columns === 'object' ? geo : null
+    } catch {
+      return null
+    }
+  }
+
+  // `job` with DuckDB's GeoParquet reading off: a file's geometry reads as
+  // WKB, and nothing looks at its CRS.
+  async function withoutGeoParquet(job) {
+    await sql.query('SET enable_geoparquet_conversion = false')
+    try {
+      return await job()
+    } finally {
+      await sql.query('SET enable_geoparquet_conversion = true')
+    }
   }
 
   // Rows (objects by column) as a new table, by way of a JSON file DuckDB
@@ -486,10 +595,105 @@ export function createGraphRunner(sql) {
     }
   }
 
+  // A page of a table for Data. A geometry cell says what the geometry is,
+  // not its bytes: its type, and its area or length on the ellipsoid
+  // ("POLYGON · 1.75 ha"), with its WKT in `wkt` (by row, then column) to show
+  // on hover. `geometry` (by column) has each geometry column's CRS, types,
+  // and counts of empty and invalid geometries in the whole table.
   async function preview(table, page) {
     const rowCount = Number((await sql.query(`SELECT count(*) FROM ${table}`)).rows[0][0])
-    const { columns, rows } = await sql.query(`SELECT * FROM ${table} LIMIT ${PAGE_SIZE} OFFSET ${page * PAGE_SIZE}`)
-    return { columns, rows, rowCount, page, pageSize: PAGE_SIZE, hasMore: (page + 1) * PAGE_SIZE < rowCount }
+    const described = (await sql.query(`DESCRIBE ${table}`)).rows.map(([name, type]) => ({ name, crs: crsOfType(type) }))
+    const paged = { rowCount, page, pageSize: PAGE_SIZE, hasMore: (page + 1) * PAGE_SIZE < rowCount }
+    const window = `LIMIT ${PAGE_SIZE} OFFSET ${page * PAGE_SIZE}`
+    const columns = described.map((c) => c.name)
+    if (!described.some(isGeometryColumn)) {
+      const { rows } = await sql.query(`SELECT * FROM ${table} ${window}`)
+      return { columns, rows, ...paged }
+    }
+    return { columns, ...(await geometryPage(table, described, window)), ...paged }
+  }
+
+  // A page with geometry: { rows, wkt, geometry }. Measuring needs the
+  // spatial extension and a CRS PROJ can transform; failing that, a geometry
+  // shows its type, and failing that (no extension), its WKT.
+  async function geometryPage(table, described, window) {
+    for (const level of ['measured', 'typed', 'text']) {
+      try {
+        const exprs = described.flatMap((c) => (isGeometryColumn(c) ? geometryCells(c, level) : [quote(c.name)]))
+        const { rows } = await sql.query(`SELECT ${exprs.map((e, i) => `${e} AS c${i}`).join(', ')} FROM ${table} ${window}`)
+        const cells = []
+        const wkt = []
+        for (const row of rows) {
+          const shown = []
+          const hover = []
+          let at = 0
+          for (const c of described) {
+            if (!isGeometryColumn(c)) {
+              shown.push(row[at++])
+              hover.push(null)
+              continue
+            }
+            const [text, type, empty, area, length] = row.slice(at, at + 5)
+            at += 5
+            const whole = text !== null && text.length > WKT_SHOWN ? `${text.slice(0, WKT_SHOWN)}…` : text
+            const measured = measure(area, length)
+            shown.push(text === null ? null : !type ? whole.slice(0, 60) : empty ? `${type} EMPTY` : measured ? `${type} · ${measured}` : type)
+            hover.push(whole)
+          }
+          cells.push(shown)
+          wkt.push(hover)
+        }
+        return { rows: cells, wkt, geometry: level === 'text' ? described.map(() => null) : await geometryInfo(table, described) }
+      } catch (e) {
+        if (level === 'text') throw e
+      }
+    }
+  }
+
+  // A geometry column's cells for a page: its WKT (cut short), type, whether
+  // it's empty, and its area and length in metres on the ellipsoid, from
+  // longitude and latitude (EPSG:4326, x, y). A CRS that isn't known can't be
+  // measured; lines have no area, polygons no length, points neither.
+  function geometryCells(column, level) {
+    const g = quote(column.name)
+    const text = `left(ST_AsText(${g}), ${WKT_SHOWN + 1})`
+    if (level === 'text') return [text, 'NULL', 'NULL', 'NULL', 'NULL']
+    const typed = [text, `ST_GeometryType(${g})::VARCHAR`, `ST_IsEmpty(${g})`]
+    if (level === 'typed' || column.crs === null) return [...typed, 'NULL', 'NULL']
+    const lonLat = ['EPSG:4326', 'OGC:CRS84'].includes(column.crs) ? g : `ST_Transform(${g}, 'EPSG:4326')`
+    return [
+      ...typed,
+      `CASE WHEN ST_Dimension(${g}) = 2 THEN ST_Area_Spheroid(${lonLat}) END`,
+      `CASE WHEN ST_Dimension(${g}) = 1 THEN ST_Length_Spheroid(${lonLat}) END`,
+    ]
+  }
+
+  // Each column's geometry info for Data's header: null for a column that
+  // isn't geometry, else { crs, types, z, empty, invalid } over the whole
+  // table (just { crs } if they can't be counted).
+  async function geometryInfo(table, described) {
+    const geometry = described.filter(isGeometryColumn)
+    const exprs = geometry.flatMap((c) => {
+      const g = quote(c.name)
+      return [
+        `list(DISTINCT ST_GeometryType(${g})::VARCHAR ORDER BY ST_GeometryType(${g})::VARCHAR) FILTER (WHERE ${g} IS NOT NULL)`,
+        `coalesce(bool_or(ST_HasZ(${g})), false)`,
+        `count(*) FILTER (WHERE ST_IsEmpty(${g}))`,
+        `count(*) FILTER (WHERE NOT ST_IsEmpty(${g}) AND NOT ST_IsValid(${g}))`,
+      ]
+    })
+    let counted = null
+    try {
+      counted = (await sql.query(`SELECT ${exprs.join(', ')} FROM ${table}`)).rows[0]
+    } catch {
+      // The header shows the CRS alone.
+    }
+    return described.map((c) => {
+      if (!isGeometryColumn(c)) return null
+      const i = geometry.indexOf(c) * 4
+      if (!counted) return { crs: c.crs }
+      return { crs: c.crs, types: counted[i] ?? [], z: Boolean(counted[i + 1]), empty: Number(counted[i + 2]), invalid: Number(counted[i + 3]) }
+    })
   }
 
   // Read a chosen file into tables, each as Parquet bytes to store, so the
@@ -502,11 +706,10 @@ export function createGraphRunner(sql) {
     if (!sql) throw new Error("No SQL engine is connected, so files can't be read.")
     const path = `flow-upload-${Date.now()}.${FILE_FORMATS[format].extensions[0]}`
     const scratch = [] // other files registered while reading
+    const scratchTables = [] // and tables made
     await sql.registerFile(path, bytes)
     try {
-      const sources = await tableQueries(format, path, bytes, fileName, scratch)
-      // A GeoParquet file's CRS is kept with its data.
-      const geo = format === 'parquet' ? await geoOfFile(path) : null
+      const sources = await tableQueries(format, path, bytes, fileName, scratch, scratchTables)
       const tables = []
       const used = []
       for (const [i, { label, select }] of sources.entries()) {
@@ -514,30 +717,32 @@ export function createGraphRunner(sql) {
         used.push(name)
         const out = `${path}-${i}.parquet`
         scratch.push(out)
-        const rowCount = await copyTo(sql, select, out, parquetOptions(geo))
+        const rowCount = await writeParquet(select, out)
         tables.push({ name, label, rowCount, bytes: await sql.readFile(out) })
       }
       return tables
     } finally {
       for (const file of [path, ...scratch]) await sql.dropFile(file)
+      for (const table of scratchTables) await sql.query(`DROP TABLE IF EXISTS ${table}`)
     }
   }
 
-  // A SELECT per table in the file.
-  async function tableQueries(format, path, bytes, fileName, scratch) {
+  // A SELECT per table in the file: [{ label, select }].
+  async function tableQueries(format, path, bytes, fileName, scratch, scratchTables) {
     const file = literal(path)
     const one = (select) => [{ label: fileName.replace(/\.[^.]*$/, ''), select }]
+    if (FILE_FORMATS[format].geo) return geoQueries(format, path, bytes, fileName, scratch)
     switch (format) {
       case 'csv': return one(`SELECT * FROM read_csv(${file})`)
       case 'tsv': return one(`SELECT * FROM read_csv(${file}, delim = '\t')`)
       case 'json': return one(`SELECT * FROM read_json_auto(${file})`)
-      case 'parquet': return one(`SELECT * FROM read_parquet(${file})`)
-      // Each feature's properties as columns, and its geometry as GeoJSON text.
-      case 'geojson':
-        return one(
-          'SELECT unnest(f.properties), to_json(f.geometry)::VARCHAR AS geometry ' +
-          `FROM (SELECT unnest(features) AS f FROM read_json_auto(${file}))`,
-        )
+      // A GeoParquet file's geometry keeps its CRS (see readParquet).
+      case 'parquet': {
+        const table = `main.${quote(`flow-upload-${Date.now()}`)}`
+        scratchTables.push(table)
+        await readParquet(path, table)
+        return one(`SELECT * FROM ${table}`)
+      }
       // The first row of each sheet is its column names (DuckDB's guess misses
       // a text heading over text values).
       case 'xlsx': {
@@ -560,6 +765,82 @@ export function createGraphRunner(sql) {
       default:
         throw new Error(`Can't read ${FILE_FORMATS[format]?.label ?? format} files.`)
     }
+  }
+
+  // A geo file's layers, each through DuckDB's spatial extension (ST_Read), so
+  // holes, multi-part features and points are kept as they are, and each
+  // geometry column carries its CRS (KML's is EPSG:4326 by its standard; a
+  // shapefile's from its .prj). A zip's shapefiles are registered member by
+  // member, since DuckDB-wasm can't open a zip itself.
+  async function geoQueries(format, path, bytes, fileName, scratch) {
+    let sources = [path]
+    if (format === 'shapefile') {
+      sources = []
+      for (const member of await unzip(bytes)) {
+        if (member.name.startsWith('__MACOSX/')) continue // macOS's resource forks
+        const memberPath = `${path}.files/${member.name}`
+        await sql.registerFile(memberPath, member.bytes)
+        scratch.push(memberPath)
+        if (/\.shp$/i.test(member.name)) sources.push(memberPath)
+      }
+      if (!sources.length) throw new Error('There\'s no shapefile (.shp) in this zip.')
+    }
+    const layers = []
+    for (const source of sources) {
+      const meta = await sql.query(`SELECT unnest(layers).name FROM ST_Read_Meta(${literal(source)})`)
+      for (const [layer] of meta.rows) layers.push({ layer, read: `ST_Read(${literal(source)}, layer := ${literal(layer)})` })
+    }
+    if (!layers.length) throw new Error('It has no layers.')
+    const queries = []
+    try {
+      for (const { layer, read } of layers) {
+        queries.push({
+          label: layers.length === 1 ? fileName.replace(/\.[^.]*$/, '') : layer,
+          ...(await geoSelect(read)),
+        })
+      }
+    } catch (e) {
+      // GDAL reads a GeoPackage without its feature counts on a thread of its
+      // own, which DuckDB-wasm can't start.
+      if (format === 'gpkg' && /thread constructor failed/.test(message(e))) {
+        throw new Error(
+          'This GeoPackage has no feature counts (GDAL\'s gpkg_ogr_contents table), which reading it here needs. ' +
+            'Save it again with QGIS or ogr2ogr, which add them, and choose it again.',
+        )
+      }
+      throw e
+    }
+    return queries
+  }
+
+  // One layer's SELECT: its geometry column called `geometry` (ST_Read calls
+  // it `geom`) unless that name is taken, and made 2D when every height in
+  // it is 0 (KML writes ",0" after each point), so it keeps real heights only.
+  // GDAL's OGC_FID (a feature's number, which every format gets) is left out;
+  // a GeoPackage's own `fid` is kept. Geometry with no CRS (a shapefile
+  // without .prj) keeps none: see writeParquet. So does a GeoPackage's
+  // "undefined" SRS (srs_id -1 or 0), which GDAL reports as a CRS of that name.
+  async function geoSelect(read) {
+    const { rows } = await sql.query(`DESCRIBE SELECT * FROM ${read}`)
+    const columns = rows.map(([name, type]) => ({ name, crs: crsOfType(type) }))
+    const taken = new Set(columns.map((c) => c.name.toLowerCase()))
+    const exprs = []
+    for (const c of columns) {
+      if (c.name === 'OGC_FID') continue // GDAL's own numbering of the features, not the file's
+      if (!isGeometryColumn(c)) {
+        exprs.push(quote(c.name))
+        continue
+      }
+      const name = c.name === 'geom' && !taken.has('geometry') ? 'geometry' : c.name
+      const g = quote(c.name)
+      const [[withZ, nonZero]] = (await sql.query(
+        `SELECT count(*) FILTER (WHERE ST_HasZ(${g})), ` +
+          `count(*) FILTER (WHERE ST_HasZ(${g}) AND (ST_ZMin(${g}) <> 0 OR ST_ZMax(${g}) <> 0)) FROM ${read}`,
+      )).rows
+      const flat = Number(withZ) && !Number(nonZero) ? `ST_Force2D(${g})` : g
+      exprs.push(`${isUndefinedCrs(c.crs) ? `CAST(${flat} AS GEOMETRY)` : flat} AS ${quote(name)}`)
+    }
+    return { select: `SELECT ${exprs.join(', ')} FROM ${read}` }
   }
 
   // Rows from outside DuckDB (a SQLite table) as a SELECT, by way of a JSON

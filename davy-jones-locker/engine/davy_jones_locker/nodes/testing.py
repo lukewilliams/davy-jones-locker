@@ -101,14 +101,15 @@ class Context(context.Context):
             else:
                 stored[key] = value
         labels = {}
+        inputs = _inputs(inputs)
         if kind is not None:
-            problems = kind.errors(node)
+            problems = kind.errors(node, pins=[i.pin for i in inputs])
             if problems:
                 raise NodeError(" ".join(problems))
             node = kind.with_defaults(node)
             labels = {f.key: f.label for f in kind.fields}
         self.logs: list[str] = []
-        super().__init__(node, _inputs(inputs), stored, self._log, labels)
+        super().__init__(node, inputs, stored, self._log, labels)
 
     def _log(self, *parts) -> None:
         self.logs.append(" ".join(str(p) for p in parts))

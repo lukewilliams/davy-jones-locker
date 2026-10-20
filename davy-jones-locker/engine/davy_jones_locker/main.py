@@ -1,8 +1,9 @@
 """The engine: FastAPI, on port 3000. An app makes its own with create_app()
 (`app` here is one with nothing added, for running the engine as it is).
 
-  GET  /health                  { status: 'ok', host, port, assistant, nodes }: the
-                                app checks this (`nodes`: the app's node kinds' names)
+  GET  /health                  { status: 'ok', host, port, local, assistant, nodes }:
+                                the app checks this (`nodes`: the app's node kinds'
+                                names; `local`: IS_LOCAL)
   GET  /nodes                   the app's node kinds and categories (nodes.py), for
                                 the browser to define
   POST /query                   SQL over the query database, with inputs as Parquet
@@ -19,7 +20,8 @@
                                 in plain words (assist.py)
 
 Errors are JSON { error }, their message meant for the user. There's no
-sign-in yet: keep the engine off the public internet until there is.
+sign-in yet, so the engine starts only with IS_LOCAL=true (local
+development), and must stay on the developer's machine.
 
 Requests from the sandboxes (the runner, the node worker) are refused, every
 one of them (see settings.SANDBOX_HOSTS): code runs there, and nothing it does
@@ -46,8 +48,23 @@ log = logging.getLogger("davy-jones-locker")
 MAX_UPLOAD = settings.MAX_UPLOAD_MB * 1024 * 1024
 
 
+NOT_LOCAL = (
+    "IS_LOCAL isn't true, so this engine counts as deployed, and a deployed engine requires sign-in, which it "
+    "doesn't have yet (roadmap 8b part b). For local development, set IS_LOCAL=true (the app's compose .env, or the "
+    "environment)."
+)
+LOCAL = (
+    "IS_LOCAL is true: local development only. The engine signs no one in, and the app's node kinds can reach the "
+    "network. Keep it on this machine: never expose it to a network others use."
+)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    if not settings.IS_LOCAL:
+        log.error(NOT_LOCAL)
+        raise RuntimeError(NOT_LOCAL)
+    log.warning(LOCAL)
     if database.available():
         try:
             await run_in_threadpool(database.migrate)
@@ -85,6 +102,7 @@ async def invalid_request(_: Request, e: RequestValidationError):
 def health():
     return {
         "status": "ok", "host": settings.PUBLIC_HOST, "port": settings.PORT, "hostname": socket.gethostname(),
+        "local": settings.IS_LOCAL,
         "assistant": assist.summary(), "nodes": sorted(noderunner.KINDS),
     }
 
@@ -146,7 +164,8 @@ async def run_node(request: Request):
     wired in, one per slot each wire carries, naming its Parquet parts), an
     `input` part per table and a `file` part per file field's file (see
     nodeworker/server.py). Checked here (the kind is the app's, its settings
-    pass their rules), then run by the node worker, whose form data answers."""
+    pass their rules, its required input pins have something wired in), then
+    run by the node worker, whose form data answers."""
     try:
         body = await read_body(request)
         parts = formdata.decode(body, request.headers.get("content-type", ""))
@@ -159,9 +178,10 @@ async def run_node(request: Request):
         return error(f"This engine has no {name or 'such'} nodes.", 404)
     try:
         node = json.loads(fields.get("node") or b"{}")
+        inputs = json.loads(fields.get("inputs") or b"[]")
     except ValueError:
-        return error("The node's data wasn't JSON.")
-    problems = kind.errors(node)
+        return error("The node's data or inputs weren't JSON.")
+    problems = kind.errors(node, pins=[i.get("pin") for i in inputs if isinstance(i, dict)])
     if problems:
         return error(" ".join(problems))
     content, content_type, status = await noderunner.forward(kind, body, request.headers.get("content-type", ""))

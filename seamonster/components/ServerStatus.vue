@@ -8,7 +8,8 @@ import { runsOnServer } from '../lib/nodeKinds.js'
 // run here in the browser. The dot blinks only while the server is there and
 // the graph has a node that runs on it (and so sends it data), like those
 // nodes' own dots; otherwise it's steady. Nothing while the host is still
-// checking.
+// checking. LOCAL marks a server in local development mode (IS_LOCAL), which
+// signs no one in and lets node kinds reach the network.
 const graph = inject(FLOW_GRAPH)
 const status = graph.server
 const connected = computed(() => status.value.state === 'connected')
@@ -24,7 +25,7 @@ const sending = computed(() => connected.value && graph.flow.nodes.value.some((n
   >
     <span class="flow-blink-dot" :class="{ 'is-steady': !sending }" aria-hidden="true"></span>
     <template v-if="connected">
-      LIVE · connected to server{{ status.address ? ` ${status.address}` : '' }}
+      LIVE · connected to server{{ status.address ? ` ${status.address}` : '' }}{{ status.local ? ' · LOCAL' : '' }}
     </template>
     <template v-else>backend not available, client execution only</template>
   </div>

@@ -6,7 +6,7 @@
 import { FlowgraphEditor } from 'seamonster'
 import { createEngineClient } from './engineClient.js'
 import { defineServerKinds } from './serverKinds.js'
-import { duckdbSql } from './duckdbSql.js'
+import { createDuckdbSql } from './duckdbSql.js'
 import { createLocalGraphStorage } from './localGraphStorage.js'
 
 const props = defineProps({
@@ -16,14 +16,18 @@ const props = defineProps({
   engineName: { type: String, default: 'The engine' },
   // What the open graph and its files are kept under in the browser.
   storageName: { type: String, default: 'davy-jones-locker' },
+  // Where the app serves DuckDB's extensions (spatial), relative to the page
+  // or absolute. See the README, "DuckDB's extensions".
+  extensionRepository: { type: String, default: 'duckdb-extensions' },
 })
 
 // Made once: none of these can change while the window is open.
 const server = props.engineUrl ? createEngineClient({ url: props.engineUrl, name: props.engineName }) : null
 if (server) defineServerKinds(server)
 const storage = createLocalGraphStorage(props.storageName)
+const sql = createDuckdbSql({ extensionRepository: props.extensionRepository })
 </script>
 
 <template>
-  <FlowgraphEditor :storage="storage" :sql="duckdbSql" :server="server" />
+  <FlowgraphEditor :storage="storage" :sql="sql" :server="server" />
 </template>

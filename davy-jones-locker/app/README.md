@@ -29,8 +29,26 @@ import 'seamonster/style.css'
 | `engine-url` | none | where the browser reaches the engine, through the app's own origin. Without it everything runs in the browser, and the window says so |
 | `engine-name` | `'The engine'` | what messages call the engine |
 | `storage-name` | `'davy-jones-locker'` | the open graph is kept in localStorage under `<name>:open-graph`, and ingested files in the IndexedDB database `<name>` |
+| `extension-repository` | `'duckdb-extensions'` | where the app serves DuckDB's extensions, relative to the page or absolute |
 
 `title`, `theme` and anything else pass through to SEAMONSTER's `FlowgraphEditor`.
+
+**DuckDB's spatial extension** (geometry, and DataIngest's KML, shapefiles,
+GeoPackage and GeoJSON) is served by the app itself, from
+`extension-repository`. The package's command fetches it for the DuckDB this
+version runs; with Vite, run it before `dev` and `build`:
+
+```json
+"scripts": {
+  "extensions": "davy-jones-locker-extensions public/duckdb-extensions",
+  "predev": "npm run extensions",
+  "prebuild": "npm run extensions"
+}
+```
+
+and leave `public/duckdb-extensions/` out of git. Serve its `.gz` copies if you
+can (it's 24 MB, 6 MB gzipped), and a missing file as a 404. Without it,
+everything but spatial SQL still works.
 
 **The engine's node kinds** (an app's `nodes.py`, served by `GET /nodes`) need
 no code in the browser: once the engine is connected, the shell defines each
@@ -39,7 +57,8 @@ Library and menus, and nodes of them saved while the engine was away stop
 being placeholders. They run on the engine, in its node worker.
 
 The parts are exported for an app that wires `FlowgraphEditor` itself:
-`createEngineClient({ url, name })`, `duckdbSql`,
+`createEngineClient({ url, name })`, `duckdbSql` (or
+`createDuckdbSql({ extensionRepository })`),
 `createLocalGraphStorage(name)` and `defineServerKinds(client, { log })`
 (the above, given the engine client; returns a function that stops it).
 

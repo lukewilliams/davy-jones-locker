@@ -4,7 +4,10 @@
 Reads <dir>/script.py and <dir>/inputs.json ({ reference name: Parquet file,
 or { table name: file } for an input with several tables }). Each input is a
 pandas DataFrame named by its reference name (several tables: an object with a
-DataFrame per table, `dataingest1_data.sheet1`). print() goes to
+DataFrame per table, `dataingest1_data.sheet1`). Where geopandas is installed,
+an input with geometry (GeoParquet) is a GeoDataFrame with each column's CRS,
+and a returned one is written back as GeoParquet with its CRS; without it,
+geometry is WKB bytes. print() goes to
 <dir>/output.txt as it happens; sleep(seconds) waits (at most 30 at a time).
 
 Writes <dir>/result.json:
@@ -72,10 +75,10 @@ def main(workdir: Path) -> None:
         namespace = {"__name__": "__flow__", "sleep": sleep}
         for name, source in spec.items():
             if isinstance(source, str):
-                namespace[name] = pd.read_parquet(workdir / source)
+                namespace[name] = read_input(workdir / source, name)
             else:
                 namespace[name] = types.SimpleNamespace(
-                    **{table: pd.read_parquet(workdir / file) for table, file in source.items()}
+                    **{table: read_input(workdir / file, f"{name}.{table}") for table, file in source.items()}
                 )
         given = set(namespace)
 
@@ -91,6 +94,27 @@ def main(workdir: Path) -> None:
     output.flush()
     result["output"] = (workdir / "output.txt").read_text(encoding="utf-8", errors="replace")
     (workdir / "result.json").write_text(json.dumps(result), encoding="utf-8")
+
+
+def read_input(path: Path, name: str):
+    """An input as a DataFrame, or a GeoDataFrame when it has geometry
+    (GeoParquet's `geo` metadata, which both engines write) and geopandas is
+    installed: each geometry column a GeoSeries with its CRS (None when the
+    CRS is unknown). Without geopandas, geometry stays WKB bytes."""
+    import pandas as pd
+    import pyarrow.parquet as pq
+
+    if b"geo" in (pq.read_schema(path).metadata or {}):
+        try:
+            import geopandas
+        except ImportError:
+            pass
+        else:
+            try:
+                return geopandas.read_parquet(path)
+            except Exception as e:
+                raise RuntimeError(f"{name} has geometry that geopandas couldn't read: {e}") from e
+    return pd.read_parquet(path)
 
 
 def script_traceback(e: BaseException) -> str:
@@ -116,7 +140,7 @@ def describe(value, workdir: Path) -> dict:
     if isinstance(value, pd.DataFrame):
         frame = value if isinstance(value.index, pd.RangeIndex) else value.reset_index()
         frame.columns = [str(c) for c in frame.columns]
-        frame.to_parquet(workdir / "value.parquet", index=False)
+        geo_frame(frame).to_parquet(workdir / "value.parquet", index=False)
         return {"kind": "table", "rows": len(frame)}
     if isinstance(value, pa.Table):
         pq.write_table(value, workdir / "value.parquet")
@@ -129,6 +153,19 @@ def describe(value, workdir: Path) -> dict:
     except (TypeError, ValueError, RecursionError):
         pass
     return {"kind": "text", "type": type(value).__name__, "text": repr(value)[:MAX_JSON_CHARS]}
+
+
+def geo_frame(frame):
+    """A DataFrame to write: a GeoDataFrame as it is (geopandas writes
+    GeoParquet, each geometry column with its CRS, which both engines read),
+    and a plain DataFrame holding GeoSeries columns as a GeoDataFrame, since
+    pandas alone can't write them."""
+    geopandas = sys.modules.get("geopandas")  # only a script that used it returns its types
+    if geopandas is None or isinstance(frame, geopandas.GeoDataFrame):
+        return frame
+    if any(isinstance(dtype, geopandas.array.GeometryDtype) for dtype in frame.dtypes):
+        return geopandas.GeoDataFrame(frame)
+    return frame
 
 
 def to_json(value):
@@ -165,10 +202,26 @@ def variables(namespace: dict, given: set) -> list[dict]:
 def summary(value) -> str:
     shape = getattr(value, "shape", None)
     if isinstance(shape, tuple) and shape:  # numpy scalars have shape ()
-        return " × ".join(str(n) for n in shape)
+        size = " × ".join(str(n) for n in shape)
+        crs = geo_crs(value)
+        return f"{size}, {crs}" if crs else size
     if isinstance(value, (list, tuple, set, dict, str)):
         return f"{len(value)} {'characters' if isinstance(value, str) else 'items'}"
     return str(value)[:60]
+
+
+def geo_crs(value) -> str | None:
+    """A GeoDataFrame's or GeoSeries' CRS, as its code where it has one."""
+    if not type(value).__module__.startswith("geopandas"):
+        return None
+    try:
+        crs = value.crs
+    except AttributeError:  # a GeoDataFrame with no active geometry column
+        return None
+    if crs is None:
+        return "CRS unknown"
+    authority = crs.to_authority()
+    return ":".join(authority) if authority else crs.name
 
 
 if __name__ == "__main__":

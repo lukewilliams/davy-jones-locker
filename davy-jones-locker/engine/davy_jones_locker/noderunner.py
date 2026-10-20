@@ -25,7 +25,7 @@ class WorkerUnavailable(RuntimeError):
 
 def register(kinds: list[nodes.NodeKind], categories: list[nodes.NodeCategory]) -> None:
     """The app's kinds and categories (create_app's `nodes` and `categories`)."""
-    nodes.check(kinds, categories)
+    nodes.check(kinds, categories, local=settings.IS_LOCAL)
     KINDS.clear()
     KINDS.update({kind.kind: kind for kind in kinds})
     CATEGORIES[:] = categories

@@ -27,7 +27,6 @@ import re
 
 import pyarrow as pa
 import pyarrow.csv as pacsv
-import pyarrow.parquet as pq
 
 from . import database, noderunner, runner, sql
 from .sql import QueryError
@@ -199,7 +198,7 @@ def run_app_kind(session: sql.Session, kind, node: dict, inputs: list[dict], out
     """A node of one of the app's kinds, by the node worker: its inputs sent
     as Parquet, its file fields' files from the stored files, and what it
     made loaded back as its slots' tables (an empty table for any it left out)."""
-    problems = kind.errors(node)
+    problems = kind.errors(node, pins=[i.get("pin") for i in inputs])
     if problems:
         raise NodeError(" ".join(problems))
     values = kind.with_defaults(node)
@@ -207,9 +206,9 @@ def run_app_kind(session: sql.Session, kind, node: dict, inputs: list[dict], out
     for i in inputs:
         item = {k: i[k] for k in ("ref", "id", "slot", "pin")}
         if isinstance(i["output"], str):
-            item["table"] = sql.to_parquet(session.arrow(i["output"]))
+            item["table"] = session.parquet(i["output"])
         else:
-            item["tables"] = {name: sql.to_parquet(session.arrow(t)) for name, t in i["output"].items()}
+            item["tables"] = {name: session.parquet(t) for name, t in i["output"].items()}
         sent.append(item)
     files = {}
     for field in kind.fields:
@@ -256,10 +255,10 @@ def run_python(session: sql.Session, node: dict, inputs: list[dict], outputs: di
     for i in inputs:
         output = i["output"]
         if isinstance(output, str):
-            payload[i["ref"]] = sql.to_parquet(session.arrow(output))
+            payload[i["ref"]] = session.parquet(output)
         else:
             for table_name, table in output.items():
-                payload[f"{i['ref']}.{table_name}"] = sql.to_parquet(session.arrow(table))
+                payload[f"{i['ref']}.{table_name}"] = session.parquet(table)
 
     result = runner.run(code, payload)
     if result.get("error"):
@@ -291,7 +290,7 @@ def run_export(session: sql.Session, node: dict, inputs: list[dict], outputs: di
         raise NodeError(f"{fmt} files can't be written on the server yet: CSV, TSV, JSON and Parquet can.")
     content_type, extension = WRITERS[fmt]
     filename = typed if format_from_name(typed) == fmt else f"{typed}.{extension}"
-    data = write(fmt, session.arrow(table))
+    data = session.parquet(table) if fmt == "parquet" else write(fmt, session.arrow(table, geometry_as_text=True))
     outputs[node["id"]] = {None: table}
     return {
         "rowCount": session.row_count(table),
@@ -340,13 +339,12 @@ def pick_export_input(node: dict, inputs: list[dict]) -> tuple[dict, str]:
 
 
 def write(fmt: str, table: pa.Table) -> bytes:
+    """CSV, TSV or JSON (Parquet is the session's own: Session.parquet)."""
     sink = io.BytesIO()
     if fmt == "csv":
         pacsv.write_csv(table, sink)
     elif fmt == "tsv":
         pacsv.write_csv(table, sink, pacsv.WriteOptions(delimiter="\t"))
-    elif fmt == "json":
-        sink.write(json.dumps(table.to_pylist(), default=str).encode())
     else:
-        pq.write_table(table, sink)
+        sink.write(json.dumps(table.to_pylist(), default=str).encode())
     return sink.getvalue()

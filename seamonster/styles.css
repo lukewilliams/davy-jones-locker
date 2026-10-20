@@ -439,6 +439,14 @@ button.flow-panel-title {
   gap: 0.375rem;
 }
 
+/* What the node's kind does (its `description`), above its fields. */
+.flow-props-description {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--flow-text-faint);
+}
+
 .flow-field-label {
   font-size: 10px;
   font-weight: 500;
@@ -822,12 +830,31 @@ button.flow-panel-title {
   letter-spacing: 0.025em;
   text-align: left;
   text-transform: uppercase;
+  vertical-align: top; /* names in line when a geometry column's header has more */
   color: var(--flow-text-faint);
 }
 
 .flow-table td {
   padding: 0.25rem 0.5rem;
   border-top: 1px solid var(--flow-panel-border);
+}
+
+/* A geometry column's header: its types and CRS under its name, and a count
+   of empty or invalid geometries. Its cells show the WKT on hover. */
+.flow-table-geometry {
+  display: block;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--flow-text-muted);
+}
+
+.flow-table-geometry-problem {
+  color: var(--flow-warning);
+}
+
+.flow-table td[title] {
+  cursor: help;
 }
 
 .flow-pager {
@@ -877,6 +904,11 @@ button.flow-panel-title {
 
 .flow-terminal-note {
   color: var(--flow-text-muted);
+}
+
+/* A run's warning: it ran, but something's likely wrong. */
+.flow-terminal-warning {
+  color: var(--flow-warning);
 }
 
 /* What a script printed. */
@@ -1288,6 +1320,14 @@ button.flow-panel-title {
 
 .flow-handle.is-connected {
   background: #fff;
+}
+
+/* A required input pin with nothing wired in: a hollow red ring, shown even
+ * while the node isn't hovered, since it stops the node running. */
+.flow-handle.is-required {
+  border-color: var(--flow-error);
+  border-width: 2px;
+  opacity: 1;
 }
 
 .flow-node.is-hovered .flow-handle {

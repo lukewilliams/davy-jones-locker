@@ -23,10 +23,12 @@ import { reactive } from 'vue'
 // name.table). The engine's README has the API.
 //
 // The engine answers GET /health with JSON { status: 'ok', host?, port?,
-// assistant?, nodes? }; anything else (an error, no answer within 3 seconds, or
+// local?, assistant?, nodes? }; anything else (an error, no answer within 3 seconds, or
 // the dev server's index.html when there's no engine) means it's unavailable.
 // `assistant` is { model, sampleRows } when it has the AI assistant set up, and
 // `nodes` the names of the app's own node kinds (status.nodes follows it).
+// `local` is true for an engine in local development (IS_LOCAL): it signs no
+// one in, and the app's node kinds can reach the network (status.local).
 
 const CONNECTED_INTERVAL_MS = 5000
 const UNAVAILABLE_INTERVAL_MS = 15000
@@ -67,7 +69,7 @@ export function createEngineClient({ url, name = 'The engine' }) {
   const post = (path, fields, inputs) => send(path, { body: form(fields, inputs) })
 
   const client = {
-    status: reactive({ state: 'checking', address: null, assistant: null, nodes: [] }),
+    status: reactive({ state: 'checking', address: null, local: false, assistant: null, nodes: [] }),
 
     async query({ sql, inputs = [] }) {
       const response = await post('/query', { sql }, inputs)
@@ -149,6 +151,7 @@ export function createEngineClient({ url, name = 'The engine' }) {
       if (body?.status !== 'ok') throw new Error('not the engine')
       status.state = 'connected'
       status.address = body.host && body.port ? `${body.host}:${body.port}` : location.host
+      status.local = body.local === true
       // Replaced only when they change, not on every check.
       if (JSON.stringify(body.assistant ?? null) !== JSON.stringify(status.assistant)) status.assistant = body.assistant ?? null
       if (JSON.stringify(body.nodes ?? []) !== JSON.stringify(status.nodes)) status.nodes = body.nodes ?? []

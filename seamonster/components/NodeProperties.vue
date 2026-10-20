@@ -1,8 +1,8 @@
 <script setup>
 import { computed, inject, ref, useId, watch } from 'vue'
 import { FLOW_GRAPH } from '../lib/flowGraph.js'
-import { checkNode, kindInfo, referenceName, runsOnServer, withDefaults } from '../lib/nodeKinds.js'
-import { FILE_FORMATS } from '../lib/fileFormats.js'
+import { checkNode, kindInfo, referenceName, runsOnServer, unwiredPins, withDefaults } from '../lib/nodeKinds.js'
+import { hasTables } from '../lib/fileFormats.js'
 import NodeField from './NodeField.vue'
 import { leaveField } from './fieldFocus.js'
 
@@ -74,7 +74,7 @@ function commitOutput() {
 const reference = computed(() => {
   const name = referenceName(props.node.id, props.node.data)
   const ingest = props.node.data.ingest
-  if (!ingest || !FILE_FORMATS[ingest.format].multi) return `this node's data as “${name}”`
+  if (!ingest || !hasTables(ingest)) return `this node's data as “${name}”`
   const tables = ingest.tables.map((t) => `“${name}.${t.name}”`)
   return `this node's tables as ${tables.slice(0, 3).join(', ')}${tables.length > 3 ? ', …' : ''}`
 })
@@ -92,14 +92,17 @@ const server = graph.server
 const serverMissing = computed(() => onServer.value && server.value.state !== 'connected')
 
 // Why it can't run now, if it can't: its kind's say (DataIngest with no file
-// yet), or a field's error (shown by the field too).
+// yet), a field's error (shown by the field too), or a required input pin
+// with nothing wired in.
 const blocked = computed(() => {
   if (kind.value.canRun) {
     const reason = kind.value.canRun(withDefaults(props.node.data))
     if (reason) return reason
   }
   const error = checkNode(props.node.data).find((p) => p.severity === 'error')
-  return error ? `${error.label}: ${error.message}` : null
+  if (error) return `${error.label}: ${error.message}`
+  const wired = graph.flow.edges.value.filter((e) => e.target === props.node.id).map((e) => e.targetHandle ?? 'target-0')
+  return unwiredPins(props.node.data, wired)[0] ?? null
 })
 const canRun = computed(
   () => !running.value && !graph.reading.has(props.node.id) && !serverMissing.value && !blocked.value,
@@ -114,6 +117,7 @@ const ids = {
 
 <template>
   <div class="flow-props">
+    <p v-if="kind.description" class="flow-props-description">{{ kind.description }}</p>
     <div class="flow-field">
       <label class="flow-field-label" :for="ids.id">ID</label>
       <input

@@ -3,7 +3,7 @@ import { computed, inject, ref } from 'vue'
 import { Handle, Position, useNodeConnections } from '@vue-flow/core'
 import { vMenu } from '../widgets/menu/index.js'
 import NodeFace from './NodeFace.vue'
-import { checkNode, inputPinsOf, kindInfo, outputPinsOf, pinOffsets, runsOnServer } from '../lib/nodeKinds.js'
+import { checkNode, inputPinsOf, kindInfo, outputPinsOf, pinOffsets, runsOnServer, unwiredPins } from '../lib/nodeKinds.js'
 import { NODE_MENU } from './flowMenus.js'
 import { FLOW_GRAPH } from '../lib/flowGraph.js'
 
@@ -30,10 +30,28 @@ const onServer = computed(() => runsOnServer(props.data))
 const serverState = computed(() => graph.server.value.state)
 
 // What's wrong with its settings (its kind's field rules): an error stops it
-// running and is its status until it has run; warnings show as a badge.
+// running and is its status until it has run; warnings show as a badge, with
+// its last run's own warnings (spatial SQL measuring in degrees, say) while
+// that run is current.
 const problems = computed(() => checkNode(props.data))
 const settingsError = computed(() => problems.value.find((p) => p.severity === 'error'))
-const warnings = computed(() => problems.value.filter((p) => p.severity === 'warn'))
+const runWarnings = computed(() =>
+  graph.run.status[props.id] === 'completed' ? (graph.run.results[props.id]?.warnings ?? []) : [],
+)
+const warnings = computed(() => [
+  ...problems.value.filter((p) => p.severity === 'warn'),
+  ...runWarnings.value.map((message) => ({ label: 'Last run', message })),
+])
+
+// Connected pins are drawn filled.
+const connections = useNodeConnections()
+const connectedPins = computed(
+  () => new Set(connections.value.map((c) => (c.source === props.id ? c.sourceHandle : c.targetHandle))),
+)
+
+// A required input pin with nothing wired in stops it running, like a
+// settings error.
+const unwired = computed(() => unwiredPins(props.data, connectedPins.value))
 
 // None while idle (not run since the graph was opened). A placeholder (a kind
 // this app doesn't have) says so until it has run and failed.
@@ -41,13 +59,11 @@ const statusLabel = computed(() =>
   onServer.value && serverState.value === 'unavailable'
     ? 'Backend not available.'
     : (STATUS_LABELS[graph.run.status[props.id]] ??
-      (kind.value.unknown ? 'Not available here.' : settingsError.value ? `${settingsError.value.label}: ${settingsError.value.message}` : '')),
-)
-
-// Connected pins are drawn filled.
-const connections = useNodeConnections()
-const connectedPins = computed(
-  () => new Set(connections.value.map((c) => (c.source === props.id ? c.sourceHandle : c.targetHandle))),
+      (kind.value.unknown
+        ? 'Not available here.'
+        : settingsError.value
+          ? `${settingsError.value.label}: ${settingsError.value.message}`
+          : (unwired.value[0] ?? ''))),
 )
 
 // Every pin on this side, spaced evenly down it (see SLOTS AND PINS in
@@ -67,7 +83,7 @@ const pins = (type) =>
         .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
         .map((id) => ({ id, label: null, refs: [] }))
     } else if (type === 'target') {
-      list = inputPinsOf(props.data).map((p) => ({ id: p.handle, label: p.label, refs: [] }))
+      list = inputPinsOf(props.data).map((p) => ({ id: p.handle, label: p.label, hint: p.hint, required: p.required, refs: [] }))
     } else {
       list = outputPinsOf(props.id, props.data).map((p) => ({
         id: p.handle,
@@ -80,6 +96,10 @@ const pins = (type) =>
   })
 const inputPins = pins('target')
 const outputPins = pins('source')
+
+// An input pin's tooltip: its label, its kind's hint, and whether it's required.
+const pinTitle = (pin) =>
+  pin.label ? `${pin.label}${pin.hint ? `: ${pin.hint}` : ''}${pin.required ? ' (required)' : ''}` : undefined
 
 // Pins show while the node is hovered. Tracked here rather than with CSS :hover,
 // which is unreliable on touch and hybrid devices.
@@ -125,9 +145,9 @@ const hoveredOutput = ref(null)
       :position="Position.Left"
       :connectable="!kind.unknown"
       class="flow-handle flow-handle--in"
-      :class="{ 'is-connected': connectedPins.has(pin.id) }"
+      :class="{ 'is-connected': connectedPins.has(pin.id), 'is-required': pin.required && !connectedPins.has(pin.id) }"
       :style="{ top: pin.top }"
-      :title="pin.label ?? undefined"
+      :title="pinTitle(pin)"
     />
     <Handle
       v-for="pin in outputPins"

@@ -42,6 +42,7 @@ with `import 'seamonster/style.css'` once in the app's entry. Props:
 | `engine-url` | none | where the browser reaches the engine (the app's own origin, `/engines/<service>`). Without it everything runs in the browser, and the window says so |
 | `engine-name` | `'The engine'` | what messages call the engine |
 | `storage-name` | `'davy-jones-locker'` | the open graph is kept in localStorage under `<name>:open-graph`, and DataIngest files in the IndexedDB database `<name>` |
+| `extension-repository` | `'duckdb-extensions'` | where the app serves DuckDB's extensions, relative to the page or absolute (below) |
 
 Anything else (`title`, `theme`) passes through to SEAMONSTER's `FlowgraphEditor`.
 The parts are exported too, for an app that wires `FlowgraphEditor` itself:
@@ -58,10 +59,53 @@ The parts are exported too, for an app that wires `FlowgraphEditor` itself:
   changes while the page is open changes on the next reload.
   `DavyJonesLocker` does this itself.
 - `duckdbSql`: FlowgraphEditor's `sql` prop ([duckdbSql.js](app/duckdbSql.js)):
-  DuckDB-wasm (1.32.0) and sql.js (1.13.0), loaded from jsDelivr when first
-  needed, never bundled.
+  DuckDB-wasm (1.33.1-dev64.0, which is DuckDB 1.5.5, the engine's) and
+  sql.js (1.13.0), loaded from jsDelivr when first needed, never bundled.
+  `createDuckdbSql({ extensionRepository })` makes one with its extensions
+  elsewhere; `duckdbSql` is one made with the default.
 - `createLocalGraphStorage(name)`: FlowgraphEditor's `storage` prop
   ([localGraphStorage.js](app/localGraphStorage.js)).
+
+### DuckDB's extensions
+
+DuckDB's spatial extension (geometry, `ST_Read` for DataIngest's geo files) is
+24 MB, 6 MB gzipped, so the app serves it itself rather than every browser
+fetching it from DuckDB. It loads the first time something needs it (a geo
+file, a spatial function, Parquet with geometry), from
+`<extension-repository>/v1.5.5/<wasm_eh|wasm_mvp>/spatial.duckdb_extension.wasm`.
+DuckDB checks its signature as it loads, so only DuckDB's own file loads.
+
+The package's `davy-jones-locker-extensions` command fetches it for the
+DuckDB this version runs, with a gzipped copy beside each file, into a
+folder the app serves as it is. With Vite, run it before `dev` and `build`:
+
+```json
+"scripts": {
+  "extensions": "davy-jones-locker-extensions public/duckdb-extensions",
+  "predev": "npm run extensions",
+  "prebuild": "npm run extensions"
+}
+```
+
+and leave `public/duckdb-extensions/` out of git. It fetches only what's
+missing, so it's quick once done. A server should serve the `.gz` copies, with
+a long cache (a path names its DuckDB version, so a file never changes), and
+answer a missing file with a 404 rather than the app's page. With nginx:
+
+```nginx
+location /duckdb-extensions/ {
+  gzip_static on;
+  add_header Cache-Control "public, max-age=31536000, immutable";
+  try_files $uri =404;
+}
+```
+
+To use DuckDB's own instead, pass
+`extension-repository="https://extensions.duckdb.org"`.
+
+Without it, everything but spatial SQL works, and a geo file or spatial query
+fails saying where the extension should be. An app linked with `file:` may
+need `npm rebuild davy-jones-locker` to link the command the first time.
 
 `vue` and `seamonster` are peer dependencies. An app linking the framework
 from a folder (`file:`) should add `davy-jones-locker` and `seamonster` to
@@ -84,4 +128,7 @@ ghcr.io/lukewilliams/davy-jones-locker-engine`).
 - Secrets live in the engine's `.env`, never in the browser.
 - Python libraries are enabled by editing `engine/runner/requirements.in`,
   recompiling with hashes, and rebuilding; scripts can't install anything.
-- There's no sign-in yet: keep the engine off the public internet.
+- There's no sign-in yet, so the engine starts only with `IS_LOCAL=true`
+  (local development: it signs no one in, and the app's node kinds can reach
+  the network). Keep it on your own machine. The app shows LOCAL beside the
+  server's address, and says so in the Terminal.

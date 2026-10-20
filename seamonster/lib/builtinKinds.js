@@ -1,9 +1,11 @@
 import DataIngestFields from '../components/DataIngestFields.vue'
 import ExportInputField from '../components/ExportInputField.vue'
-import { FILE_FORMATS, formatFromName, withExtension, writableFormats } from './fileFormats.js'
+import { FILE_FORMATS, formatFromName, hasTables, withExtension, writableFormats } from './fileFormats.js'
+import { crsOfType, writeGeoJson, writeGeoPackage, writeKml, writeShapefile } from './geoExport.js'
+import { lonLatExportWarnings } from './spatialChecks.js'
 import { runJavaScript } from './jsSandbox.js'
 import { defineNodeKind, toIdentifier } from './kindRegistry.js'
-import { copyTo, literal, loadExcel } from './sqlText.js'
+import { copyTo, fromHex, loadExcel, quote } from './sqlText.js'
 import { repairXlsx } from './xlsx.js'
 
 // SEAMONSTER's own node kinds, defined as an app defines its own (see
@@ -23,6 +25,7 @@ const connected = (server, method) => server.state === 'connected' && typeof ser
 defineNodeKind({
   kind: 'sql-query',
   label: 'SQLQuery',
+  description: "Queries the nodes wired in with DuckDB SQL, here in the browser, or on the server when it reads the server's own tables.",
   category: 'fetch',
   idPrefix: 'sqlnode',
   outputName: true,
@@ -49,7 +52,8 @@ defineNodeKind({
       const which = remote.length === 1 ? `${remote[0]}, which isn't` : `${remote.join(', ')}, which aren't`
       return { error: `This query reads ${which} wired in, so it runs on the server, which isn't available.` }
     }
-    return { table }
+    const warnings = await ctx.spatialWarnings(query)
+    return { table, ...(warnings.length ? { warnings } : {}) }
   },
 })
 defineNodeKind({ kind: '3d-asset', label: '3D Asset', category: 'fetch', idPrefix: 'asset' })
@@ -63,6 +67,7 @@ defineNodeKind({ kind: 'http-request', label: 'HTTP Request', category: 'fetch',
 defineNodeKind({
   kind: 'python-script',
   label: 'PythonScript',
+  description: 'Runs Python on the server, in its sandbox, with each node wired in as a pandas DataFrame. Its last expression is its output.',
   category: 'modify',
   idPrefix: 'pythonscript',
   outputName: true,
@@ -100,6 +105,7 @@ defineNodeKind({
 defineNodeKind({
   kind: 'javascript',
   label: 'JavaScript',
+  description: 'Runs JavaScript here in the browser, in a sandbox, with each node wired in as an array of rows. What it returns is its output.',
   category: 'modify',
   idPrefix: 'javascript',
   outputName: true,
@@ -152,6 +158,7 @@ defineNodeKind({ kind: 'debug', label: 'Debug', category: 'debug', idPrefix: 'de
 defineNodeKind({
   kind: 'data-ingest',
   label: 'DataIngest',
+  description: "Reads a file (CSV, Excel, Parquet, JSON, SQLite, or a geo file) into tables, once when it's chosen.",
   category: 'import',
   idPrefix: 'dataingest',
   outputName: true,
@@ -168,7 +175,7 @@ defineNodeKind({
       await ctx.loadParquet(table, bytes)
       tables.push({ name: stored.name, label: stored.label, table })
     }
-    return FILE_FORMATS[ingest.format].multi ? { tables } : { table: tables[0].table }
+    return hasTables(ingest) ? { tables } : { table: tables[0].table }
   },
 })
 defineNodeKind({ kind: 'dxf-import', label: 'DXF Import', category: 'import', idPrefix: 'dxfimport', runs: true })
@@ -180,6 +187,7 @@ defineNodeKind({ kind: 'dxf-import', label: 'DXF Import', category: 'import', id
 defineNodeKind({
   kind: 'data-export',
   label: 'DataExport',
+  description: "Writes what's wired in to a file, which downloads when it runs, and passes it on unchanged.",
   category: 'export',
   idPrefix: 'dataexport',
   fields: [
@@ -209,7 +217,7 @@ defineNodeKind({
     const filename = withExtension(typed, format)
     const spec = FILE_FORMATS[format]
     const written = tables ?? [{ name: toIdentifier(input.id) || 'data', table: picked.table }]
-    if (written.length > 1 && spec.multi !== 'read-write') {
+    if (written.length > 1 && !spec.writeTables) {
       return {
         error: `${spec.label} holds one table, and ${input.id} has ${written.length}. ` +
           'Put a SQLQuery node in between to pick one.',
@@ -217,9 +225,11 @@ defineNodeKind({
     }
     // Parquet through the runner, which keeps a table's GeoParquet metadata.
     const bytes = format === 'parquet' ? await ctx.parquetOf(written[0].table) : await writeFile(ctx.sql, format, written, filename)
+    const warnings = format === 'geojson' || format === 'kml' ? await lonLatExportWarnings(ctx.sql, written, spec.label) : []
     return {
       ...(tables ? { tables } : { table: picked.table }),
       export: { filename, contentType: spec.contentType, size: bytes.length, bytes },
+      ...(warnings.length ? { warnings } : {}),
     }
   },
 })
@@ -257,11 +267,16 @@ function pickExportInput(node, inputs) {
 }
 
 async function writeFile(sql, format, tables, filename) {
-  const all = async (table) => sql.query(`SELECT * FROM ${table}`)
-  if (format === 'geojson') return new TextEncoder().encode(JSON.stringify(toGeoJson(await all(tables[0].table))))
+  const baseName = filename.replace(/\.[^.]*$/, '') || 'export'
+  if (format === 'geojson') return writeGeoJson(sql, tables[0].table)
+  if (format === 'kml') return writeKml(sql, tables, baseName)
+  if (format === 'gpkg') return writeGeoPackage(sql, tables)
+  if (format === 'shapefile') return writeShapefile(sql, tables, baseName)
   if (format === 'sqlite') {
     if (!sql.writeSqlite) throw new Error("This SQL engine can't write SQLite files.")
-    return sql.writeSqlite(await Promise.all(tables.map(async (t) => ({ name: t.name, ...(await all(t.table)) }))))
+    const written = []
+    for (const t of tables) written.push(await sqliteTable(sql, t))
+    return sql.writeSqlite(written)
   }
   const options = {
     csv: 'FORMAT csv, HEADER',
@@ -281,18 +296,23 @@ async function writeFile(sql, format, tables, filename) {
   }
 }
 
-// Rows with a `geometry` column of GeoJSON text (as DataIngest reads a
-// .geojson file) as a FeatureCollection; the other columns are properties.
-function toGeoJson({ columns, rows }) {
-  const g = columns.findIndex((c) => c.toLowerCase() === 'geometry')
-  if (g < 0) throw new Error('GeoJSON needs a geometry column of GeoJSON text, like a .geojson file read by DataIngest has.')
+// A table's rows for SQLite: geometry as WKT (as CSV and Excel write it),
+// and blobs as bytes, which writeSqlite stores as blobs.
+async function sqliteTable(sql, { name, table }) {
+  const described = (await sql.query(`DESCRIBE SELECT * FROM ${table}`)).rows.map(([column, type]) => ({
+    column,
+    geometry: crsOfType(type) !== undefined,
+    blob: String(type) === 'BLOB',
+  }))
+  const exprs = described.map(({ column, geometry, blob }) => {
+    const c = quote(column)
+    return geometry ? `ST_AsText(${c}) AS ${c}` : blob ? `hex(${c}) AS ${c}` : c
+  })
+  const { columns, rows } = await sql.query(`SELECT ${exprs.join(', ')} FROM ${table}`)
   return {
-    type: 'FeatureCollection',
-    features: rows.map((row) => ({
-      type: 'Feature',
-      geometry: typeof row[g] === 'string' ? JSON.parse(row[g]) : row[g],
-      properties: Object.fromEntries(columns.flatMap((c, i) => (i === g ? [] : [[c, row[i]]]))),
-    })),
+    name,
+    columns,
+    rows: rows.map((row) => row.map((v, i) => (described[i].blob && v !== null ? fromHex(v) : v))),
   }
 }
 

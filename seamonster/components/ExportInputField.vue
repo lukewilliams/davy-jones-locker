@@ -1,7 +1,7 @@
 <script setup>
 import { computed, inject, ref, useId, watch } from 'vue'
 import { FLOW_GRAPH } from '../lib/flowGraph.js'
-import { FILE_FORMATS } from '../lib/fileFormats.js'
+import { hasTables } from '../lib/fileFormats.js'
 import { kindInfo, referenceName } from '../lib/nodeKinds.js'
 import { OPEN_MENU } from './flowMenus.js'
 import { leaveField } from './fieldFocus.js'
@@ -37,7 +37,7 @@ const wiredInputs = computed(() => {
   return [...ids].map((id) => graph.flow.findNode(id)).filter(Boolean).flatMap((source) => {
     const name = referenceName(source.id, source.data)
     const category = kindInfo(source.data.kind).category
-    const tables = source.data.ingest && FILE_FORMATS[source.data.ingest.format].multi ? source.data.ingest.tables : []
+    const tables = source.data.ingest && hasTables(source.data.ingest) ? source.data.ingest.tables : []
     return [{ name, category }, ...tables.map((t) => ({ name: `${name}.${t.name}`, category, table: true }))]
   })
 })

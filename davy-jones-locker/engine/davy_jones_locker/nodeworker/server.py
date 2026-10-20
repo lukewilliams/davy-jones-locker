@@ -5,8 +5,10 @@ Handlers are the app's code, so trusted, but they parse what users send
 (uploaded files, other nodes' tables) with whatever libraries they use, C
 libraries among them. So they don't run in the engine, which holds the
 database's and the AI proxy's credentials: they run here, in a container
-with none, on a network it shares only with the engine, with no way out
-(10e will add one, through a proxy, for kinds that need it). Each run is a
+with none, on a network it shares only with the engine. In local development
+(IS_LOCAL=true) the app's compose file gives it a way out too; otherwise it
+has none (10e will add one, through a proxy, for kinds that need it). Each
+run is a
 process of its own (child.py), killed when it passes its kind's timeout_s,
 with its memory capped at NODE_MEMORY_MB (as address space, doubled for
 allocators' reservations).
@@ -85,7 +87,7 @@ async def run(request: Request):
         inputs = json.loads(fields.get("inputs") or b"[]")
     except ValueError:
         return refuse("The node's data or inputs weren't JSON.", 400)
-    errors = kind.errors(node)
+    errors = kind.errors(node, pins=[i.get("pin") for i in inputs if isinstance(i, dict)])
     if errors:
         return refuse(" ".join(errors), 400)
     tables = {filename: data for name, data, _, filename in parts if name == "input" and filename}

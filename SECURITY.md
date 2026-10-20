@@ -43,10 +43,12 @@ vulnerability:
 
 These are documented, and reports of them alone aren't needed:
 
-- **The engine has no sign-in yet.** Anyone who can reach it can use it,
-  including its AI assistant's budget, and a Python script can reach it from
-  the sandbox network. Don't expose the engine to the internet or untrusted
-  networks until sign-in exists.
+- **The engine has no sign-in yet**, so it starts only for local
+  development (`IS_LOCAL=true`). Then anyone who can reach it can use it,
+  including its AI assistant's budget, and the app's node kinds can reach
+  the network. Keep it on your own machine, never on the internet or a
+  network others use, until sign-in exists. (The engine refuses requests
+  from its own sandboxes either way.)
 - **The doc widget doesn't sanitise markdown.** It renders HTML as given;
   sanitise documents that come from sources you don't control (see
   `seamonster/widgets/doc/README.md`).

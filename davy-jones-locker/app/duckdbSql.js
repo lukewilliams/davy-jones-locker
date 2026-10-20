@@ -6,13 +6,21 @@
 //   query(sql) -> Promise<{ columns: string[], rows: any[][] }>
 //   registerFile(name, bytes), readFile(name) -> Promise<Uint8Array>, dropFile(name)
 //   readSqlite(bytes) -> Promise<[{ name, columns, rows }]>
-//   writeSqlite([{ name, columns, rows }]) -> Promise<Uint8Array>
+//   writeSqlite([{ name, columns, rows, types? }], { statements? }) -> Promise<Uint8Array>
+//   loadSpatial() -> Promise
 //
 // with plain values in the rows: numbers, strings, booleans, null, and arrays
 // or objects of those.
+//
+// DuckDB's spatial extension loads the first time a query needs it (DuckDB
+// says a function "exists in the spatial extension"), and the query runs
+// again; or when the runner asks (loadSpatial), before it reads geometry. It
+// comes from the app's own origin (`extensionRepository`, see the README).
+// Axis order is then always x, y, as on the engine (geometry_always_xy).
 
-const DUCKDB_VERSION = '1.32.0'
-const DUCKDB_URL = `https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@${DUCKDB_VERSION}/+esm`
+import { DUCKDB_WASM_VERSION, DEFAULT_EXTENSION_REPOSITORY } from './duckdbVersions.js'
+
+const DUCKDB_URL = `https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@${DUCKDB_WASM_VERSION}/+esm`
 const SQLJS_VERSION = '1.13.0'
 const SQLJS_URL = `https://cdn.jsdelivr.net/npm/sql.js@${SQLJS_VERSION}`
 
@@ -26,7 +34,7 @@ function once(load) {
   }
 }
 
-const duckdb = once(async () => {
+async function startDuckdb() {
   const lib = await import(/* @vite-ignore */ DUCKDB_URL)
   const bundle = await lib.selectBundle(lib.getJsDelivrBundles())
   // The worker script is cross-origin, so it's started from a same-origin blob.
@@ -37,7 +45,38 @@ const duckdb = once(async () => {
   await db.instantiate(bundle.mainModule, bundle.pthreadWorker)
   URL.revokeObjectURL(workerUrl)
   return { db, conn: await db.connect() }
-})
+}
+
+const NEEDS_SPATIAL = /it exists in the spatial extension/
+
+// The repository as an absolute URL without a trailing slash: DuckDB fetches
+// <repository>/<DuckDB version>/<wasm_eh|wasm_mvp>/spatial.duckdb_extension.wasm.
+const absolute = (repository) => new URL(repository.replace(/\/?$/, '/'), document.baseURI).href.replace(/\/$/, '')
+
+async function loadSpatial(conn, repository) {
+  try {
+    await conn.query(`INSTALL spatial FROM ${literal(repository)}`)
+    await conn.query('LOAD spatial')
+  } catch (e) {
+    const why = String(e?.message ?? e).split('\n')[0]
+    const see = 'The app serves it (davy-jones-locker-extensions): see "DuckDB\'s extensions" in the davy-jones-locker README.'
+    // DuckDB calls a file that isn't there unsigned (a dev server answers a
+    // missing file with the app's page), so look for it.
+    const url = /Extension "(https?:[^"]+\.wasm)"/.exec(why)?.[1]
+    if (url && !(await isWasm(url))) throw new Error(`This query needs DuckDB's spatial extension, which isn't at ${url}. ${see}`)
+    throw new Error(`This query needs DuckDB's spatial extension, which couldn't be loaded from ${repository} (${why}). ${see}`)
+  }
+  await conn.query('SET geometry_always_xy = true')
+}
+
+async function isWasm(url) {
+  try {
+    const response = await fetch(url, { method: 'HEAD' })
+    return response.ok && !String(response.headers.get('content-type')).includes('text/html')
+  } catch {
+    return false
+  }
+}
 
 const sqlite = once(async () => {
   const lib = await import(/* @vite-ignore */ `${SQLJS_URL}/+esm`)
@@ -72,70 +111,109 @@ function untyped(value) {
 
 const hex = (bytes) => `\\x${Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')}`
 const quote = (name) => `"${name.replaceAll('"', '""')}"`
+const literal = (text) => `'${text.replaceAll("'", "''")}'`
 
-export const duckdbSql = {
-  async query(sql) {
-    const { conn } = await duckdb()
-    const table = await conn.query(sql)
-    const fields = table.schema.fields
-    const columns = fields.map((f, i) => ({ vector: table.getChildAt(i), type: f.type }))
-    const rows = []
-    for (let r = 0; r < table.numRows; r++) rows.push(columns.map((c) => plain(c.vector.get(r), c.type)))
-    return { columns: fields.map((f) => f.name), rows }
-  },
+// A SQL engine of its own (its own DuckDB). `extensionRepository`: where the
+// app serves DuckDB's extensions, relative to the page or absolute
+// (https://extensions.duckdb.org for DuckDB's own).
+export function createDuckdbSql({ extensionRepository = DEFAULT_EXTENSION_REPOSITORY } = {}) {
+  const duckdb = once(startDuckdb)
+  const spatial = once(async () => loadSpatial((await duckdb()).conn, absolute(extensionRepository)))
+  const run = async (sql) => (await duckdb()).conn.query(sql)
 
-  // A copy: DuckDB-wasm hands the buffer to its worker, which would leave the
-  // caller's bytes empty (the editor keeps them to register again next run).
-  async registerFile(name, bytes) {
-    const { db } = await duckdb()
-    await db.registerFileBuffer(name, bytes.slice())
-  },
-
-  async readFile(name) {
-    const { db } = await duckdb()
-    return db.copyFileToBuffer(name)
-  },
-
-  async dropFile(name) {
-    const { db } = await duckdb()
-    await db.dropFile(name)
-  },
-
-  // Every table in a SQLite database. Blobs come out as \x.. hex text.
-  async readSqlite(bytes) {
-    const SQL = await sqlite()
-    const db = new SQL.Database(bytes)
-    try {
-      const names = db.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY rowid")
-      return (names[0]?.values ?? []).map(([name]) => {
-        const columns = (db.exec(`PRAGMA table_info(${quote(name)})`)[0]?.values ?? []).map((c) => c[1])
-        const rows = (db.exec(`SELECT * FROM ${quote(name)}`)[0]?.values ?? []).map((row) =>
-          row.map((v) => (v instanceof Uint8Array ? hex(v) : v)),
-        )
-        return { name, columns, rows }
-      })
-    } finally {
-      db.close()
-    }
-  },
-
-  // A SQLite database of these tables. Columns are untyped (SQLite keeps each
-  // value's own type); lists and structs are stored as JSON text.
-  async writeSqlite(tables) {
-    const SQL = await sqlite()
-    const db = new SQL.Database()
-    try {
-      for (const { name, columns, rows } of tables) {
-        db.run(`CREATE TABLE ${quote(name)} (${columns.map(quote).join(', ')})`)
-        const insert = db.prepare(`INSERT INTO ${quote(name)} VALUES (${columns.map(() => '?').join(', ')})`)
-        for (const row of rows) {
-          insert.run(row.map((v) => (typeof v === 'boolean' ? Number(v) : v !== null && typeof v === 'object' ? JSON.stringify(v) : v)))
-        }
-        insert.free()
+  return {
+    async query(sql) {
+      let table
+      try {
+        table = await run(sql)
+      } catch (e) {
+        if (!NEEDS_SPATIAL.test(String(e?.message))) throw e
+        await spatial()
+        table = await run(sql)
       }
-      return db.export()
-    } finally {
-      db.close()
+      return rowsOf(table)
+    },
+
+    loadSpatial: () => spatial(),
+
+    // A copy: DuckDB-wasm hands the buffer to its worker, which would leave the
+    // caller's bytes empty (the editor keeps them to register again next run).
+    async registerFile(name, bytes) {
+      const { db } = await duckdb()
+      await db.registerFileBuffer(name, bytes.slice())
+    },
+
+    async readFile(name) {
+      const { db } = await duckdb()
+      return db.copyFileToBuffer(name)
+    },
+
+    async dropFile(name) {
+      const { db } = await duckdb()
+      await db.dropFile(name)
+    },
+
+    readSqlite,
+    writeSqlite,
+  }
+}
+
+// The default engine, its extensions served from the app's
+// `duckdb-extensions/` folder.
+export const duckdbSql = createDuckdbSql()
+
+function rowsOf(table) {
+  const fields = table.schema.fields
+  const columns = fields.map((f, i) => ({ vector: table.getChildAt(i), type: f.type }))
+  const rows = []
+  for (let r = 0; r < table.numRows; r++) rows.push(columns.map((c) => plain(c.vector.get(r), c.type)))
+  return { columns: fields.map((f) => f.name), rows }
+}
+
+// Every table in a SQLite database. Blobs come out as \x.. hex text.
+async function readSqlite(bytes) {
+  const SQL = await sqlite()
+  const db = new SQL.Database(bytes)
+  try {
+    const names = db.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY rowid")
+    return (names[0]?.values ?? []).map(([name]) => {
+      const columns = (db.exec(`PRAGMA table_info(${quote(name)})`)[0]?.values ?? []).map((c) => c[1])
+      const rows = (db.exec(`SELECT * FROM ${quote(name)}`)[0]?.values ?? []).map((row) =>
+        row.map((v) => (v instanceof Uint8Array ? hex(v) : v)),
+      )
+      return { name, columns, rows }
+    })
+  } finally {
+    db.close()
+  }
+}
+
+// A SQLite database of these tables. Columns are untyped (SQLite keeps each
+// value's own type) unless `types` gives each column's declaration
+// ('INTEGER PRIMARY KEY', 'TEXT'). Bytes (Uint8Array) are blobs; lists and
+// structs are stored as JSON text. `statements` run after the tables are
+// made, each SQL text or [SQL, parameters] (a GeoPackage's own tables and
+// pragmas).
+async function writeSqlite(tables, { statements = [] } = {}) {
+  const SQL = await sqlite()
+  const db = new SQL.Database()
+  const value = (v) => (typeof v === 'boolean' ? Number(v)
+    : v instanceof Uint8Array || v === null || typeof v !== 'object' ? v
+    : JSON.stringify(v))
+  try {
+    for (const { name, columns, rows, types } of tables) {
+      const declared = columns.map((c, i) => (types?.[i] ? `${quote(c)} ${types[i]}` : quote(c)))
+      db.run(`CREATE TABLE ${quote(name)} (${declared.join(', ')})`)
+      const insert = db.prepare(`INSERT INTO ${quote(name)} VALUES (${columns.map(() => '?').join(', ')})`)
+      for (const row of rows) insert.run(row.map(value))
+      insert.free()
     }
-  },
+    for (const statement of statements) {
+      if (typeof statement === 'string') db.run(statement)
+      else db.run(statement[0], statement[1].map(value))
+    }
+    return db.export()
+  } finally {
+    db.close()
+  }
 }

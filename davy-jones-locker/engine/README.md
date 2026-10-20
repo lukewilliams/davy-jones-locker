@@ -17,9 +17,14 @@ engine, for:
   them from the engine, and the node worker runs them.
 - **Whole graphs on the server**, for schedulers (n8n, say) to trigger.
 
-There's no sign-in yet (identity is the next part): keep the engine off the
-public internet until there is. Until then, anyone who can reach it can use
-its AI assistant, and so its LiteLLM key's budget.
+There's no sign-in yet (identity is the next part), so the engine starts
+only for local development: `IS_LOCAL=true` (compose's `.env`, or the
+environment). Then it signs no one in, and the app's node kinds can reach the
+network; it logs a warning saying so, `/health` reports `local: true`, and
+the app shows LOCAL. Anyone who can reach it can use it, its AI assistant
+included (and so its LiteLLM key's budget): keep it on your own machine.
+Without `IS_LOCAL=true` it counts as deployed, which requires sign-in, so it
+refuses to start until sign-in exists.
 
 ## An app's engine
 
@@ -35,7 +40,7 @@ and its image starts from the framework's ([Dockerfile](Dockerfile)), adding
 that entry point:
 
 ```dockerfile
-FROM ghcr.io/lukewilliams/davy-jones-locker-engine:0.2.1
+FROM ghcr.io/lukewilliams/davy-jones-locker-engine:0.3.0
 COPY main.py ./
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "3000"]
 ```
@@ -50,7 +55,7 @@ published to GitHub's container registry for each release, from 0.2.0, for
 | `ghcr.io/lukewilliams/davy-jones-locker-runner` | [runner/Dockerfile](runner/Dockerfile) |
 | `ghcr.io/lukewilliams/davy-jones-locker-node-worker` | [nodeworker/Dockerfile](nodeworker/Dockerfile) |
 
-Each is tagged with the version (`0.2.1`) and its minor (`0.2`); there's no
+Each is tagged with the version (`0.3.0`) and its minor (`0.3`); there's no
 `latest`, so an app says which version it builds on. Or build them yourself
 from this folder (`docker build -t davy-jones-locker-engine .`, and `-f
 runner/Dockerfile` or `-f nodeworker/Dockerfile` for the others), as
@@ -79,7 +84,9 @@ credentials either). The app's compose file usually sets `RUNNER_URL` (the
 runner's address, default `http://runner:3000`), `NODE_WORKER_URL` (the node
 worker's, when the app has node kinds) and `PUBLIC_HOST` (what `/health`
 reports, default `engine`). `SANDBOX_HOSTS` names more hosts whose requests
-the engine refuses (see Safeguards).
+the engine refuses (see Safeguards). `RUNNER_PACKAGES_FILE` names an app's
+own runner `requirements.in` inside the engine's image, when its runner adds
+libraries (see Python and geometry); the assistant reads it.
 
 ## API
 
@@ -119,7 +126,7 @@ there's a database. On the server:
 | SQLQuery | on the server's DuckDB: its inputs and the query database |
 | PythonScript | in the runner |
 | DataIngest | from its tables stored with `PUT /files/{key}` (the keys in the node's `ingest.tables`) |
-| DataExport | to CSV, TSV, JSON or Parquet, returned in the result |
+| DataExport | to CSV, TSV, JSON (geometry as WKT, as in the browser) or Parquet (GeoParquet), returned in the result. The geo formats are written in the browser only, for now. Its CSV quotes every field (pyarrow's writer), which the browser's doesn't |
 | The app's own | by the node worker; a file field's file comes from the stored files (`PUT /files/{key}`) |
 | JavaScript | refused: browser only until the engine has safeguards for it |
 | anything else | can't run on the server yet |
@@ -168,8 +175,9 @@ def buffer(ctx):
 - **A kind** has a namespaced name (`app.kind`), a label, a category (built
   in, or one of `categories`), and a `handler`, `"module:function"`. The
   engine never imports the handler, so its libraries needn't be in the
-  engine's image. `fields`, `slots` and `input_pins` are as SEAMONSTER has
-  them, but plain data: hints are text, rules declarative (`Rule(required=,
+  engine's image. `description` says what it does (Manage and the Library
+  show it). `fields`, `slots` and `input_pins` are as SEAMONSTER has
+  them, an input pin's `hint` and `required` included, but plain data: hints are text, rules declarative (`Rule(required=,
   min=, max=, pattern=)`, `severity='warn'` for a warning), options a fixed
   list, and there's no custom field type. `timeout_s` bounds a run (60 by
   default).
@@ -207,10 +215,12 @@ def buffer(ctx):
   can hold several items with the same `pin`. A handler wanting one table
   there picks it (by `slot`, or by what's in it).
 - **Geometry:** write it as WKB with GeoParquet `geo` metadata on the
-  Arrow schema (each geometry column's encoding and CRS). The metadata
-  survives every hop: the worker's reply, the browser's tables, the engine's
-  whole-graph runs, and DataExport's Parquet. A SQL query's output doesn't
-  carry it yet (roadmap 8g).
+  Arrow schema (each geometry column's encoding and CRS, as PROJJSON, or
+  `null` for unknown). Both engines load it as a `GEOMETRY` column with that
+  CRS, so SQL downstream can use it as it is, and every table with geometry
+  that reaches a handler comes the same way, a SQL query's output included.
+  No `crs` key means OGC:CRS84, which both engines load as `EPSG:4326` (the
+  same coordinates; see "Spatial SQL").
 - **How long:** the worker kills a run at the kind's `timeout_s`, and the
   engine waits for the worker `timeout_s` plus 30 seconds (for the data
   both ways).
@@ -220,12 +230,15 @@ def buffer(ctx):
   `NODE_KINDS=nodes:KINDS`. It runs only the kinds that list names, each run
   a process of its own, killed at the kind's `timeout_s`, its memory capped
   (`NODE_MEMORY_MB`), a few at once (`NODE_CONCURRENCY`).
-- **Checked twice:** the engine refuses a kind it wasn't given and settings
-  that break an error rule before asking the worker, and the worker checks
-  again.
-- A kind can't ask for network access yet (`network=True` is refused): the
-  worker has no way out until roadmap step 10e gives it one, through a proxy
-  to hosts the engine's settings allow.
+- **Checked twice:** the engine refuses a kind it wasn't given, settings
+  that break an error rule, and a required input pin with nothing wired in
+  before asking the worker, and the worker checks again
+  (`kind.errors(node, pins=...)`; `nodes.testing.Context` does the same).
+- **Network access:** in local development (`IS_LOCAL=true`) every kind can
+  reach the network, and a kind may say it needs to (`network=True`).
+  Otherwise `network=True` is refused: a deployed worker has no way out until
+  sign-in and roadmap step 10e, which gives one through a proxy to hosts the
+  engine's settings allow.
 
 ## AI assistant
 
@@ -248,8 +261,9 @@ input's reference name, columns (name and type), row count and first
 `ASSIST_SAMPLE_ROWS` rows (values cut to 200 characters), which the browser
 works out by running what's upstream; and for SQL, the query database's
 tables and columns, not their rows. For Python, it's told the packages in
-[runner/requirements.in](runner/requirements.in), so enabling one there tells
-it too. It answers by calling a `write_code` tool (code and a note), or with
+[runner/requirements.in](runner/requirements.in) (or `RUNNER_PACKAGES_FILE`),
+so enabling one there tells it too; when geopandas is one, it's also told
+inputs with geometry are GeoDataFrames. It answers by calling a `write_code` tool (code and a note), or with
 a fenced code block. The code only fills the node's editor: nothing runs
 until the user runs it. Prompts and answers aren't logged, only their size
 and time.
@@ -297,6 +311,40 @@ connections or run SQL given as text (`postgres_*`, `query`, `query_table`),
 checked with DuckDB's own parser. Queries stop after `QUERY_TIMEOUT_SECONDS`
 and are held to `QUERY_MEMORY_LIMIT`.
 
+**Spatial SQL.** DuckDB's spatial extension is installed with the image and
+loaded before the lockdown, so its functions (`ST_Transform`, `ST_Buffer`,
+`ST_Area_Spheroid` and the rest) work in server SQL. Axis order is always
+x, y (easting or longitude first), whatever a CRS's official order is
+(`geometry_always_xy`), as in the browser. So
+`ST_Transform(geom, 'EPSG:4326', 'EPSG:7855')` needs no `always_xy`.
+
+The extension's readers are refused twice:
+- **The query check** refuses `ST_Read`, `ST_Read_Meta`, `ST_ReadOSM`,
+  `ST_ReadSHP` and `shapefile_meta`. Geo files are read in the browser
+  (DataIngest) and wired in.
+- **The lockdown** refuses them on its own: GDAL goes through DuckDB's file
+  system, so local paths, URLs, `/vsicurl/` and its network drivers (WFS,
+  OAPIF, Elasticsearch) are all refused.
+
+PROJ fetches no grids (`PROJ_NETWORK=OFF`, and the lockdown).
+
+**Geometry keeps its CRS** through a query, as in the browser. A wired-in
+table's GeoParquet `geo` metadata puts each geometry column's CRS on its
+type (`GEOMETRY('EPSG:7855')`): the Parquet is read with pyarrow, and its
+`geo` becomes geoarrow field metadata, which DuckDB loads with the CRS.
+Only WKB columns are geometry: GeoParquet 1.1's native encodings stay as
+they are, as in the browser. A
+query's output goes back as GeoParquet built from the columns' types
+(`Session.parquet`): each CRS as PROJJSON, the geometry types found, and
+`"crs": null` for a column with none, since no `crs` would mean OGC:CRS84.
+OGC:CRS84 itself is loaded as `EPSG:4326` (DuckDB-wasm's spatial can't
+identify CRS84, so the browser does this, and the engine matches it). Mixing
+CRSs in one function is refused when the query is bound.
+
+The engine runs without the extension, outside Docker for instance. A
+warning is logged once, and spatial SQL then fails with a message saying
+the extension isn't installed.
+
 **Python** ([sandbox/](davy_jones_locker/sandbox/)). The engine never runs
 it: the runner does, in a separate container that holds no credentials (its
 settings file is separate, and nothing secret goes in it) and can reach
@@ -318,8 +366,10 @@ Handlers are the app's code, but they parse what users send (uploads, other
 nodes' tables), often with C libraries. So they never run in the engine,
 which holds the database's and the AI proxy's credentials: the node worker
 runs them, in a container like the runner's (read-only, unprivileged, no
-capabilities, no credentials, on a network shared only with the engine, with
-no way out). It runs only the kinds `NODE_KINDS` names, never a handler a
+capabilities, no credentials, on a network shared only with the engine). In
+local development (`IS_LOCAL=true`) compose also puts it on `outside-true`, a
+network with a way out, so handlers can call web services; otherwise it has
+none (`outside-false` is internal). It runs only the kinds `NODE_KINDS` names, never a handler a
 request names, each run in its own process with a timeout and a memory cap.
 
 **Libraries**: scripts get exactly what [runner/requirements.in](runner/requirements.in)
@@ -327,7 +377,42 @@ lists (pandas, numpy, pyarrow), compiled to a pinned, hashed
 `runner/requirements.txt` and installed at image build; nothing installs at
 run time. To enable a library, add it there, recompile (the command is in the
 file), and rebuild. An app adds its own the same way, in a runner image
-built on this one.
+built on this one (see Python and geometry).
+
+## Python and geometry
+
+Tables with geometry reach the runner as GeoParquet, each column's CRS in its
+`geo` metadata (`"crs": null` when it's unknown). Where geopandas is
+installed in the runner, the worker reads such an input with
+`geopandas.read_parquet`: it's a GeoDataFrame, each geometry column a
+GeoSeries with its CRS (None when unknown). A GeoDataFrame or GeoSeries the
+script ends with is written back with geopandas' `to_parquet`, so the engine
+and the browser load it as `GEOMETRY` with its CRS; a plain DataFrame holding
+GeoSeries columns is made a GeoDataFrame first. A variable's summary names
+its CRS (`3 × 4, EPSG:7855`).
+
+Without geopandas nothing changes: geometry is WKB bytes in a DataFrame, and
+a DataFrame returned with them comes back as a blob, not geometry. Shapely
+objects in a plain column (not a GeoSeries) can't be returned.
+
+The framework's runner has no geopandas: which geo libraries scripts get is
+an app's choice. To add them, build the app's runner on the framework's:
+list the framework's libraries and the app's own in the app's
+`runner/requirements.in` (geopandas, shapely, pyproj, pyogrio, at versions
+that work with the framework's pandas and pyarrow), compile it with hashes
+as the framework's is, and install it in an image built on the runner's:
+
+```dockerfile
+FROM ghcr.io/lukewilliams/davy-jones-locker-runner:0.3.0
+USER root
+COPY runner/requirements.txt /tmp/app-requirements.txt
+RUN pip install --no-cache-dir --require-hashes -r /tmp/app-requirements.txt && rm /tmp/app-requirements.txt
+USER 65534:65534
+```
+
+Then copy the app's `runner/requirements.in` into the engine's image too, and
+set `RUNNER_PACKAGES_FILE` to it, so the assistant knows what scripts can
+import. Checked with geopandas 1.2.0, shapely 2.1.2 and pyproj 3.8.0.
 
 ## Layout
 
@@ -340,7 +425,7 @@ davy_jones_locker/
     testing.py   running a handler in a test
   noderunner.py  the app's kinds as the engine knows them, and calls to the node worker
   database.py    the engine's tables in Postgres
-  sql.py         locked-down DuckDB sessions, query checks
+  sql.py         locked-down DuckDB sessions (with spatial), query checks
   runner.py      calls to the runner
   executor.py    whole-graph runs
   assist.py      the AI assistant (through LiteLLM)
@@ -353,6 +438,7 @@ davy_jones_locker/
     child.py     runs one node's handler
 runner/          the runner's Dockerfile and libraries
 nodeworker/      the node worker's Dockerfile and libraries
+tests/           the engine's tests (pytest)
 Dockerfile       the engine's image
 ```
 
@@ -362,16 +448,39 @@ With Python 3.12 and the packages from both lock files installed, from this
 folder:
 
 ```
-RUNNER_URL=http://127.0.0.1:9002 uvicorn davy_jones_locker.main:app --port 9001
+IS_LOCAL=true RUNNER_URL=http://127.0.0.1:9002 uvicorn davy_jones_locker.main:app --port 9001
 uvicorn davy_jones_locker.sandbox.server:app --port 9002
 ```
+
+Install DuckDB's extensions once, as the image does at build: the engine
+locks DuckDB down and can't install them itself.
+
+```
+python -c "import duckdb; duckdb.sql('INSTALL postgres'); duckdb.sql('INSTALL spatial')"
+```
+
+The tests need no database:
+
+```
+pip install --group test
+python -m pytest
+```
+
+`test_python.py` runs the runner's worker, so it needs the runner's
+libraries too (and geopandas for most of it); without them it's skipped.
+`test_parity.py` checks spatial SQL gives the numbers the browser gave: a
+query of its own, and `fixtures/screening.sql`, site screening as an app
+writes it (a projection centred on the site built per row, buffers,
+distances, overlaps, geodesic areas) over made-up data. When DuckDB or its
+spatial extension is upgraded, run them in the browser again and update the
+numbers (the file says how).
 
 With node kinds, from the app's folder (where its `nodes.py` and handlers are),
 with the engine installed from PyPI (`pip install davy-jones-locker`, the
 version you pin) or this folder on `PYTHONPATH`:
 
 ```
-NODE_WORKER_URL=http://127.0.0.1:9003 RUNNER_URL=http://127.0.0.1:9002 uvicorn main:app --port 9001
+IS_LOCAL=true NODE_WORKER_URL=http://127.0.0.1:9003 RUNNER_URL=http://127.0.0.1:9002 uvicorn main:app --port 9001
 NODE_KINDS=nodes:KINDS uvicorn davy_jones_locker.nodeworker.server:app --port 9003
 ```
 

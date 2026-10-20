@@ -1,6 +1,6 @@
 [project]
 name = "davy-jones-locker"
-version = "0.2.1"
+version = "0.3.0"
 description = "The Python engine that executes flowgraphs: SQL on a locked-down DuckDB, Python in a sandboxed runner, saved graphs, and an AI assistant. Its browser shell is davy-jones-locker on npm, on SEAMONSTER."
 readme = "README.md"
 license = "Apache-2.0"
@@ -26,6 +26,10 @@ dependencies = [
     "httpx>=0.28",
 ]
 
+[dependency-groups]
+# The tests (tests/): pip install --group test, then python -m pytest.
+test = ["pytest>=8"]
+
 [project.urls]
 Homepage = "https://github.com/lukewilliams/davy-jones-locker/tree/main/davy-jones-locker/engine#readme"
 Repository = "https://github.com/lukewilliams/davy-jones-locker"
@@ -37,3 +41,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["davy_jones_locker"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

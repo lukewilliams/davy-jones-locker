@@ -4,7 +4,7 @@ import { FILE_FORMATS, formatFromName, formatSize } from './fileFormats.js'
 import { EMPTY_DOCUMENT, fromDocument, toDocument } from './graphDocument.js'
 import { createGraphRunner } from './graphRunner.js'
 import { isTyping } from './keyboard.js'
-import { inputPinsOf, isAutoId, isCosmetic, nextNodeId, NODE_KINDS, slotsOf, slotsThrough, toIdentifier, uniqueId } from './nodeKinds.js'
+import { inputPinsOf, isAutoId, isCosmetic, isKnownKind, nextNodeId, NODE_KINDS, slotsOf, slotsThrough, toIdentifier, uniqueId } from './nodeKinds.js'
 
 export const FLOW_GRAPH = Symbol('flow-graph')
 
@@ -42,6 +42,7 @@ function resultEntries(result) {
     const size = (s) => (s.data ? rows(s.data.rowCount) : `${s.tables.length} tables`)
     entries.push({ type: 'info', text: `Also: ${result.slots.map((s) => `${s.ref} (${size(s)})`).join(', ')}.` })
   }
+  if (!result.error) for (const text of result.warnings ?? []) entries.push({ type: 'warning', text })
   return entries
 }
 
@@ -73,7 +74,7 @@ function resultEntries(result) {
  * per node ID, `{ state, entries }`, and `logs.app` the app's own entries
  * (the server coming and going, Execute Graph, and whatever the host adds
  * with `log`). An entry is `{ id, type, text, count }`, type being 'output'
- * (printed), 'error', 'info' or 'note'. Runs append to a node's log. A log
+ * (printed), 'error', 'warning' (a run's `warnings`), 'info' or 'note'. Runs append to a node's log. A log
  * belongs to its node's state, the edit count kept per node (its settings,
  * its wires, anything upstream, Reset): the first run after a change clears
  * it before adding. An entry already in a log isn't added again: it counts
@@ -97,6 +98,7 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
   const serverStatus = computed(() => ({
     state: server?.status?.state ?? 'unavailable',
     address: server?.status?.address ?? null,
+    local: server?.status?.local === true,
     assistant: (typeof server?.assist === 'function' && server?.status?.assistant) || null,
   }))
   const deletions = [] // undo stack of { nodes, edges }
@@ -217,10 +219,15 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
   const reaches = (from, to) => from === to || downstreamOf(from).includes(to)
 
   // The graph must stay acyclic: no wire back into a node's own upstream. A
-  // named input pin takes one wire, unless it says it takes many.
+  // named input pin takes one wire, unless it says it takes many. A
+  // placeholder (a kind this app doesn't have) keeps the wires it was saved
+  // with, whatever pins they use: its kind isn't here to say which it has.
+  // (It takes no new ones: its pins aren't connectable.)
   function isValidConnection({ source, target, targetHandle }) {
     if (reaches(target, source)) return false
-    const pin = inputPinsOf(flow.findNode(target)?.data ?? {}).find((p) => p.handle === (targetHandle ?? 'target-0'))
+    const node = flow.findNode(target)
+    if (node && !isKnownKind(node.data.kind)) return true
+    const pin = inputPinsOf(node?.data ?? {}).find((p) => p.handle === (targetHandle ?? 'target-0'))
     if (!pin) return false
     return pin.many || !flow.edges.value.some((e) => e.target === target && e.targetHandle === pin.handle)
   }
@@ -477,7 +484,7 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
     for (const entry of entries) append(logs.nodes[id].entries, entry)
   }
 
-  // An entry in the app's log: `type` is 'info' (default), 'error' or 'note'.
+  // An entry in the app's log: `type` is 'info' (default), 'error', 'warning' or 'note'.
   const log = (text, type = 'info') => append(logs.app, { type, text })
 
   // The server coming and going, in the app's log.
@@ -485,8 +492,15 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
     () => serverStatus.value.state,
     (state, previous) => {
       if (state === 'connected') {
-        const { address } = serverStatus.value
+        const { address, local } = serverStatus.value
         log(`Connected to the server${address ? ` at ${address}` : ''}.`)
+        if (local) {
+          log(
+            'The server is in local development mode (IS_LOCAL): it signs no one in, and node kinds that run on it ' +
+              'can reach the network. Keep it on your own machine.',
+            'warning',
+          )
+        }
       } else if (state === 'unavailable') {
         log(
           previous === 'connected'
@@ -537,7 +551,7 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
         const { bytes, ...file } = result.export
         const downloaded = ids.includes(id)
         if (downloaded) download(result.export)
-        result = { export: { ...file, downloaded } }
+        result = { ...result, export: { ...file, downloaded } } // the bytes aren't kept
       }
       run.results[id] = result
       const edited = (edits.get(id) ?? 0) !== (editsAtStart.get(id) ?? 0)

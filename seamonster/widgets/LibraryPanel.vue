@@ -35,7 +35,9 @@ function onDragStart(kind, e) {
             class="flow-library-card"
             :class="`flow-node--${section.id}`"
             draggable="true"
-            :title="`Drag onto the canvas to add ${NODE_KINDS[kind].label}`"
+            :title="NODE_KINDS[kind].description
+              ? `${NODE_KINDS[kind].description}\n\nDrag onto the canvas to add one.`
+              : `Drag onto the canvas to add ${NODE_KINDS[kind].label}`"
             @dragstart="onDragStart(kind, $event)"
           >
             <NodeFace :label="NODE_KINDS[kind].label" />

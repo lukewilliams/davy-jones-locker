@@ -1,9 +1,9 @@
 # Builds DAVY JONES' LOCKER's base images and pushes them to GitHub's container
 # registry, for each davy-jones-locker release:
 #
-#   ghcr.io/lukewilliams/davy-jones-locker-engine        the engine
-#   ghcr.io/lukewilliams/davy-jones-locker-runner        the Python sandbox
-#   ghcr.io/lukewilliams/davy-jones-locker-node-worker   runs an app's own node kinds
+#   ghcr.io/<owner>/davy-jones-locker-engine        the engine
+#   ghcr.io/<owner>/davy-jones-locker-runner        the Python sandbox
+#   ghcr.io/<owner>/davy-jones-locker-node-worker   runs an app's own node kinds
 #
 # each tagged with the version (0.2.0) and its minor (0.2), for linux/amd64 and
 # linux/arm64. There's no `latest`: an app names the version it builds on.
@@ -104,9 +104,11 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,scope=${{ matrix.image }},mode=max
 
+      # IS_LOCAL=true: without sign-in, the engine starts only for local
+      # development (the runner and the node worker ignore it).
       - name: Check it answers /health
         run: |
-          docker run -d --name smoke -p 3000:3000 smoke-test
+          docker run -d --name smoke -e IS_LOCAL=true -p 3000:3000 smoke-test
           for _ in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:3000/health; then echo; exit 0; fi
             sleep 1

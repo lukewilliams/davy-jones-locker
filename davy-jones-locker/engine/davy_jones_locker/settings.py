@@ -13,6 +13,13 @@ def _list(name: str) -> list[str]:
     return [item.strip() for item in (os.environ.get(name) or "").split(",") if item.strip()]
 
 
+# Local development (IS_LOCAL=true): the engine signs no one in, and the
+# app's node kinds can reach the network (the app's compose file opens the
+# node worker's way out from the same setting). Anything else means a
+# deployment, which requires sign-in; the engine has none yet (roadmap 8b
+# part b), so it refuses to start until IS_LOCAL is true.
+IS_LOCAL = (os.environ.get("IS_LOCAL") or "").strip().lower() == "true"
+
 # What /health reports as this engine's address.
 PUBLIC_HOST = os.environ.get("PUBLIC_HOST") or "engine"
 PORT = _int("PORT", 3000)
@@ -28,6 +35,10 @@ QUERY_DATABASE_URL = os.environ.get("QUERY_DATABASE_URL") or DATABASE_URL
 
 # The Python sandbox (sandbox/), usually a service of its own beside the engine.
 RUNNER_URL = (os.environ.get("RUNNER_URL") or "http://runner:3000").rstrip("/")
+# The runner's requirements.in, which the assistant reads to know what scripts
+# can import: an app whose runner adds libraries copies its own into the
+# engine's image and names it here. Empty: the framework's.
+RUNNER_PACKAGES_FILE = os.environ.get("RUNNER_PACKAGES_FILE") or ""
 
 # The node worker (nodeworker/), which runs the app's own node kinds: needed
 # only when create_app is given some.

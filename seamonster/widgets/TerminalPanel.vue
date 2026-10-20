@@ -13,6 +13,7 @@ const stale = computed(() => node.value && graph.run.status[node.value.id] === '
 const ENTRY_CLASSES = {
   output: 'flow-terminal-output',
   error: 'flow-terminal-error',
+  warning: 'flow-terminal-line flow-terminal-warning',
   info: 'flow-terminal-line',
   note: 'flow-terminal-line flow-terminal-note',
 }

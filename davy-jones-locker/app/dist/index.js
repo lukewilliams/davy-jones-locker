@@ -34,6 +34,7 @@ function h({ url: e, name: t = "The engine" }) {
 		status: n({
 			state: "checking",
 			address: null,
+			local: !1,
 			assistant: null,
 			nodes: []
 		}),
@@ -110,7 +111,7 @@ function h({ url: e, name: t = "The engine" }) {
 				signal: AbortSignal.timeout(f)
 			}), n = t.ok && t.headers.get("content-type")?.includes("json") ? await t.json() : null;
 			if (n?.status !== "ok") throw Error("not the engine");
-			e.state = "connected", e.address = n.host && n.port ? `${n.host}:${n.port}` : location.host, JSON.stringify(n.assistant ?? null) !== JSON.stringify(e.assistant) && (e.assistant = n.assistant ?? null), JSON.stringify(n.nodes ?? []) !== JSON.stringify(e.nodes) && (e.nodes = n.nodes ?? []);
+			e.state = "connected", e.address = n.host && n.port ? `${n.host}:${n.port}` : location.host, e.local = n.local === !0, JSON.stringify(n.assistant ?? null) !== JSON.stringify(e.assistant) && (e.assistant = n.assistant ?? null), JSON.stringify(n.nodes ?? []) !== JSON.stringify(e.nodes) && (e.nodes = n.nodes ?? []);
 		} catch {
 			e.state = "unavailable", e.address = null, e.assistant = null;
 		}
@@ -150,101 +151,143 @@ function g(e, { log: t = (e) => console.warn(e) } = {}) {
 	}, { immediate: !0 });
 }
 //#endregion
-//#region duckdbSql.js
-var _ = "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.32.0/+esm", v = "https://cdn.jsdelivr.net/npm/sql.js@1.13.0";
-function y(e) {
+//#region duckdbVersions.js
+var _ = "1.33.1-dev64.0", v = "duckdb-extensions", y = `https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@${_}/+esm`, b = "https://cdn.jsdelivr.net/npm/sql.js@1.13.0";
+function x(e) {
 	let t = null;
 	return () => (t ??= e(), t.catch(() => t = null), t);
 }
-var b = y(async () => {
+async function S() {
 	let e = await import(
 		/* @vite-ignore */
-		_
+		y
 ), t = await e.selectBundle(e.getJsDelivrBundles()), n = URL.createObjectURL(new Blob([`importScripts("${t.mainWorker}");`], { type: "text/javascript" })), r = new e.AsyncDuckDB(new e.VoidLogger(), new Worker(n));
 	return await r.instantiate(t.mainModule, t.pthreadWorker), URL.revokeObjectURL(n), {
 		db: r,
 		conn: await r.connect()
 	};
-}), x = y(async () => {
+}
+var C = /it exists in the spatial extension/, w = (e) => new URL(e.replace(/\/?$/, "/"), document.baseURI).href.replace(/\/$/, "");
+async function T(e, t) {
+	try {
+		await e.query(`INSTALL spatial FROM ${N(t)}`), await e.query("LOAD spatial");
+	} catch (e) {
+		let n = String(e?.message ?? e).split("\n")[0], r = "The app serves it (davy-jones-locker-extensions): see \"DuckDB's extensions\" in the davy-jones-locker README.", i = /Extension "(https?:[^"]+\.wasm)"/.exec(n)?.[1];
+		throw i && !await E(i) ? Error(`This query needs DuckDB's spatial extension, which isn't at ${i}. ${r}`) : Error(`This query needs DuckDB's spatial extension, which couldn't be loaded from ${t} (${n}). ${r}`);
+	}
+	await e.query("SET geometry_always_xy = true");
+}
+async function E(e) {
+	try {
+		let t = await fetch(e, { method: "HEAD" });
+		return t.ok && !String(t.headers.get("content-type")).includes("text/html");
+	} catch {
+		return !1;
+	}
+}
+var D = x(async () => {
 	let e = await import(
 		/* @vite-ignore */
-		`${v}/+esm`
+		`${b}/+esm`
 );
-	return (e.default ?? e)({ locateFile: (e) => `${v}/dist/${e}` });
+	return (e.default ?? e)({ locateFile: (e) => `${b}/dist/${e}` });
 });
-function S(e, t) {
+function O(e, t) {
 	if (e == null) return null;
 	let n = String(t);
-	return n.startsWith("Decimal") ? C(String(e), t.scale) : n.startsWith("Date") ? new Date(e).toISOString().slice(0, 10) : n.startsWith("Timestamp") ? new Date(e).toISOString().replace("T", " ").replace(/\.000Z|Z/, "") : w(e);
+	return n.startsWith("Decimal") ? k(String(e), t.scale) : n.startsWith("Date") ? new Date(e).toISOString().slice(0, 10) : n.startsWith("Timestamp") ? new Date(e).toISOString().replace("T", " ").replace(/\.000Z|Z/, "") : A(e);
 }
-function C(e, t) {
+function k(e, t) {
 	if (!t) return e;
 	let n = e.startsWith("-"), r = (n ? e.slice(1) : e).padStart(t + 1, "0");
 	return `${n ? "-" : ""}${r.slice(0, -t)}.${r.slice(-t)}`;
 }
-function w(e) {
-	return typeof e == "bigint" ? Number.isSafeInteger(Number(e)) ? Number(e) : String(e) : typeof e != "object" || !e ? e : typeof e.toJSON == "function" ? w(e.toJSON()) : Array.isArray(e) || ArrayBuffer.isView(e) ? Array.from(e, w) : Object.fromEntries(Object.entries(e).map(([e, t]) => [e, w(t)]));
+function A(e) {
+	return typeof e == "bigint" ? Number.isSafeInteger(Number(e)) ? Number(e) : String(e) : typeof e != "object" || !e ? e : typeof e.toJSON == "function" ? A(e.toJSON()) : Array.isArray(e) || ArrayBuffer.isView(e) ? Array.from(e, A) : Object.fromEntries(Object.entries(e).map(([e, t]) => [e, A(t)]));
 }
-var T = (e) => `\\x${Array.from(e, (e) => e.toString(16).padStart(2, "0")).join("")}`, E = (e) => `"${e.replaceAll("\"", "\"\"")}"`, D = {
-	async query(e) {
-		let { conn: t } = await b(), n = await t.query(e), r = n.schema.fields, i = r.map((e, t) => ({
-			vector: n.getChildAt(t),
-			type: e.type
-		})), a = [];
-		for (let e = 0; e < n.numRows; e++) a.push(i.map((t) => S(t.vector.get(e), t.type)));
-		return {
-			columns: r.map((e) => e.name),
-			rows: a
-		};
-	},
-	async registerFile(e, t) {
-		let { db: n } = await b();
-		await n.registerFileBuffer(e, t.slice());
-	},
-	async readFile(e) {
-		let { db: t } = await b();
-		return t.copyFileToBuffer(e);
-	},
-	async dropFile(e) {
-		let { db: t } = await b();
-		await t.dropFile(e);
-	},
-	async readSqlite(e) {
-		let t = new (await (x())).Database(e);
-		try {
-			return (t.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY rowid")[0]?.values ?? []).map(([e]) => ({
-				name: e,
-				columns: (t.exec(`PRAGMA table_info(${E(e)})`)[0]?.values ?? []).map((e) => e[1]),
-				rows: (t.exec(`SELECT * FROM ${E(e)}`)[0]?.values ?? []).map((e) => e.map((e) => e instanceof Uint8Array ? T(e) : e))
-			}));
-		} finally {
-			t.close();
-		}
-	},
-	async writeSqlite(e) {
-		let t = new (await (x())).Database();
-		try {
-			for (let { name: n, columns: r, rows: i } of e) {
-				t.run(`CREATE TABLE ${E(n)} (${r.map(E).join(", ")})`);
-				let e = t.prepare(`INSERT INTO ${E(n)} VALUES (${r.map(() => "?").join(", ")})`);
-				for (let t of i) e.run(t.map((e) => typeof e == "boolean" ? Number(e) : typeof e == "object" && e ? JSON.stringify(e) : e));
-				e.free();
+var j = (e) => `\\x${Array.from(e, (e) => e.toString(16).padStart(2, "0")).join("")}`, M = (e) => `"${e.replaceAll("\"", "\"\"")}"`, N = (e) => `'${e.replaceAll("'", "''")}'`;
+function P({ extensionRepository: e = v } = {}) {
+	let t = x(S), n = x(async () => T((await t()).conn, w(e))), r = async (e) => (await t()).conn.query(e);
+	return {
+		async query(e) {
+			let t;
+			try {
+				t = await r(e);
+			} catch (i) {
+				if (!C.test(String(i?.message))) throw i;
+				await n(), t = await r(e);
 			}
-			return t.export();
-		} finally {
-			t.close();
-		}
+			return I(t);
+		},
+		loadSpatial: () => n(),
+		async registerFile(e, n) {
+			let { db: r } = await t();
+			await r.registerFileBuffer(e, n.slice());
+		},
+		async readFile(e) {
+			let { db: n } = await t();
+			return n.copyFileToBuffer(e);
+		},
+		async dropFile(e) {
+			let { db: n } = await t();
+			await n.dropFile(e);
+		},
+		readSqlite: L,
+		writeSqlite: R
+	};
+}
+var F = P();
+function I(e) {
+	let t = e.schema.fields, n = t.map((t, n) => ({
+		vector: e.getChildAt(n),
+		type: t.type
+	})), r = [];
+	for (let t = 0; t < e.numRows; t++) r.push(n.map((e) => O(e.vector.get(t), e.type)));
+	return {
+		columns: t.map((e) => e.name),
+		rows: r
+	};
+}
+async function L(e) {
+	let t = new (await (D())).Database(e);
+	try {
+		return (t.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY rowid")[0]?.values ?? []).map(([e]) => ({
+			name: e,
+			columns: (t.exec(`PRAGMA table_info(${M(e)})`)[0]?.values ?? []).map((e) => e[1]),
+			rows: (t.exec(`SELECT * FROM ${M(e)}`)[0]?.values ?? []).map((e) => e.map((e) => e instanceof Uint8Array ? j(e) : e))
+		}));
+	} finally {
+		t.close();
 	}
-}, O = "files";
-function k(e = "davy-jones-locker") {
+}
+async function R(e, { statements: t = [] } = {}) {
+	let n = new (await (D())).Database(), r = (e) => typeof e == "boolean" ? Number(e) : e instanceof Uint8Array || typeof e != "object" || !e ? e : JSON.stringify(e);
+	try {
+		for (let { name: t, columns: i, rows: a, types: o } of e) {
+			let e = i.map((e, t) => o?.[t] ? `${M(e)} ${o[t]}` : M(e));
+			n.run(`CREATE TABLE ${M(t)} (${e.join(", ")})`);
+			let s = n.prepare(`INSERT INTO ${M(t)} VALUES (${i.map(() => "?").join(", ")})`);
+			for (let e of a) s.run(e.map(r));
+			s.free();
+		}
+		for (let e of t) typeof e == "string" ? n.run(e) : n.run(e[0], e[1].map(r));
+		return n.export();
+	} finally {
+		n.close();
+	}
+}
+//#endregion
+//#region localGraphStorage.js
+var z = "files";
+function B(e = "davy-jones-locker") {
 	let t = `${e}:open-graph`, n = null, r = () => n ??= new Promise((t, n) => {
 		let r = indexedDB.open(e, 1);
-		r.onupgradeneeded = () => r.result.createObjectStore(O), r.onsuccess = () => t(r.result), r.onerror = () => n(r.error);
+		r.onupgradeneeded = () => r.result.createObjectStore(z), r.onsuccess = () => t(r.result), r.onerror = () => n(r.error);
 	});
 	async function i(e, t) {
 		let n = await r();
 		return new Promise((r, i) => {
-			let a = t(n.transaction(O, e).objectStore(O));
+			let a = t(n.transaction(z, e).objectStore(z));
 			a.onsuccess = () => r(a.result), a.onerror = () => i(a.error);
 		});
 	}
@@ -282,7 +325,7 @@ function k(e = "davy-jones-locker") {
 }
 //#endregion
 //#region DavyJonesLocker.vue
-var A = {
+var V = {
 	__name: "DavyJonesLocker",
 	props: {
 		engineUrl: {
@@ -296,6 +339,10 @@ var A = {
 		storageName: {
 			type: String,
 			default: "davy-jones-locker"
+		},
+		extensionRepository: {
+			type: String,
+			default: "duckdb-extensions"
 		}
 	},
 	setup(n) {
@@ -304,10 +351,10 @@ var A = {
 			name: i.engineName
 		}) : null;
 		o && g(o);
-		let s = k(i.storageName);
+		let s = B(i.storageName), c = P({ extensionRepository: i.extensionRepository });
 		return (n, i) => (t(), e(r(a), {
 			storage: r(s),
-			sql: r(D),
+			sql: r(c),
 			server: r(o)
 		}, null, 8, [
 			"storage",
@@ -317,4 +364,4 @@ var A = {
 	}
 };
 //#endregion
-export { A as DavyJonesLocker, h as createEngineClient, k as createLocalGraphStorage, g as defineServerKinds, D as duckdbSql };
+export { V as DavyJonesLocker, P as createDuckdbSql, h as createEngineClient, B as createLocalGraphStorage, g as defineServerKinds, F as duckdbSql };

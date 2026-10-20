@@ -65,6 +65,8 @@ export function defineNodeCategory({ id, label, colors }) {
  *               plugin's (geo.buffer)
  *   label       the name on its face, and the Library's and menus'
  *   category    a category's id (the built-ins, or one defineNodeCategory made)
+ *   description what it does, in a sentence or two: Manage shows it above its
+ *               fields, and the Library when its card is hovered
  *   idPrefix    new nodes' IDs are <idPrefix><n>; by default the label as an
  *               identifier, without underscores (buffer1 for Buffer)
  *   run(ctx)    runs it in the browser (see graphRunner.js for ctx and what
@@ -84,7 +86,10 @@ export function defineNodeCategory({ id, label, colors }) {
  *   slots       its named outputs beyond the first (see SLOTS below):
  *               [{ name, label?, pin? }], or a function of the node's data
  *   inputPins   named input pins beside the main one, for inputs with a
- *               role: [{ name, label?, many? }], or a function of the data
+ *               role: [{ name, label?, many?, hint?, required? }], or a
+ *               function of the data. `hint` shows when the pin is hovered;
+ *               a `required` pin with nothing wired in stops the node running
+ *               (its face and Manage say so, and its ring shows hollow red)
  */
 
 /*
@@ -147,8 +152,11 @@ const PIN_NAME = /^[a-z_][a-z0-9_]*$/
 
 function checkPins(kind, what, list) {
   const names = new Set()
-  for (const { name } of list) {
+  for (const { name, hint, required } of list) {
     if (!PIN_NAME.test(name ?? '')) throw new Error(`Node kind ${kind} has a ${what} named "${name}": use lowercase letters, digits and _.`)
+    if (what === 'input pin' && ((hint !== undefined && typeof hint !== 'string') || (required !== undefined && typeof required !== 'boolean'))) {
+      throw new Error(`Node kind ${kind}'s input pin ${name} needs its hint to be text and required true or false.`)
+    }
     if (what === 'slot' && name === 'data') throw new Error(`Node kind ${kind} has a slot named data: that's the first slot's name.`)
     if (names.has(name)) throw new Error(`Node kind ${kind} has two ${what}s named ${name}.`)
     names.add(name)
@@ -188,6 +196,9 @@ export function defineNodeKind(definition) {
   if (!label) throw new Error(`Node kind ${kind} needs a label.`)
   if (!NODE_CATEGORIES.some((c) => c.id === category)) {
     throw new Error(`Node kind ${kind} is in category "${category}", which isn't defined.`)
+  }
+  if (definition.description !== undefined && typeof definition.description !== 'string') {
+    throw new Error(`Node kind ${kind}'s description needs to be text.`)
   }
   if (definition.run !== undefined && typeof definition.run !== 'function') {
     throw new Error(`Node kind ${kind}'s run must be a function.`)
@@ -370,13 +381,25 @@ export function slotsThrough(handle, id, data) {
 }
 
 // A node's input pins, top to bottom: the main one, then its kind's named
-// ones, each { handle, name, label, many }.
+// ones, each { handle, name, label, many, hint, required }.
 export function inputPinsOf(data) {
   const named = isKnownKind(data.kind) ? listOf(NODE_KINDS[data.kind].inputPins, withDefaults(data)) : []
   return [
-    { handle: 'target-0', name: null, label: null, many: true },
-    ...named.map((p) => ({ handle: `target:${p.name}`, name: p.name, label: p.label ?? p.name, many: !!p.many })),
+    { handle: 'target-0', name: null, label: null, many: true, hint: null, required: false },
+    ...named.map((p) => ({
+      handle: `target:${p.name}`, name: p.name, label: p.label ?? p.name, many: !!p.many,
+      hint: p.hint ?? null, required: !!p.required,
+    })),
   ]
+}
+
+// Why a node can't run for want of an input: its required pins with nothing
+// wired in, given the handles its wires come in through. [] when none.
+export function unwiredPins(data, wiredHandles) {
+  const wired = new Set(wiredHandles)
+  return inputPinsOf(data)
+    .filter((p) => p.required && !wired.has(p.handle))
+    .map((p) => `${p.label}: wire a node into this input first.`)
 }
 
 // Where pins sit down a node's side, as a top %: evenly spaced, with equal

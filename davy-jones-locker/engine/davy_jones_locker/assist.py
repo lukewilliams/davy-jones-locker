@@ -130,6 +130,14 @@ script's last line, if it's an expression, is the node's output: end with the \
 resulting DataFrame on its own line (not assigned, not printed). print() shows \
 in the Console."""
 
+# Added when the runner has geopandas (worker.py's read_input and geo_frame).
+PYTHON_GEO = """\
+An input with geometry columns is a geopandas GeoDataFrame, each geometry \
+column with its CRS (gdf.crs; None when unknown). To output geometry, end with \
+a GeoDataFrame (or GeoSeries) with its CRS set: it keeps its geometry and CRS \
+downstream. Measure lengths and areas in a projected CRS in metres (to_crs), \
+not in longitude and latitude."""
+
 JAVASCRIPT = """\
 This is a JavaScript node: the body of an async function, run in a sandbox in \
 the browser (no DOM, no network, no imports), stopped after 30 seconds. Each \
@@ -164,8 +172,9 @@ WRITE_CODE = {
 
 def python_libraries() -> list[str]:
     """The packages scripts can import, from the runner's requirements.in (its
-    "Libraries scripts can import" section), so enabling one tells the model."""
-    path = Path(__file__).resolve().parents[1] / "runner" / "requirements.in"
+    "Libraries scripts can import" section; RUNNER_PACKAGES_FILE for an app's
+    own runner), so enabling one tells the model."""
+    path = Path(settings.RUNNER_PACKAGES_FILE or Path(__file__).resolve().parents[1] / "runner" / "requirements.in")
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
@@ -183,7 +192,10 @@ def system_prompt(kind: str, has_database: bool) -> str:
     if kind == "sql-query":
         specific = SQL + "\n\n" + (SQL_DATABASE if has_database else SQL_NO_DATABASE)
     elif kind == "python-script":
-        specific = PYTHON.format(libraries=", ".join(python_libraries()))
+        libraries = python_libraries()
+        specific = PYTHON.format(libraries=", ".join(libraries))
+        if "geopandas" in (name.lower() for name in libraries):
+            specific += " " + PYTHON_GEO
     else:
         specific = JAVASCRIPT
     return COMMON + "\n\n" + specific

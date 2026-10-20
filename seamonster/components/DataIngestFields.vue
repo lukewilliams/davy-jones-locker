@@ -1,7 +1,7 @@
 <script setup>
 import { computed, inject, ref, useId, watch } from 'vue'
 import { FLOW_GRAPH } from '../lib/flowGraph.js'
-import { FILE_FORMATS, READABLE_EXTENSIONS, formatFromName, formatSize, nameFromFile, readableFormats } from '../lib/fileFormats.js'
+import { FILE_FORMATS, READABLE_EXTENSIONS, hasTables, formatFromName, formatSize, nameFromFile, readableFormats } from '../lib/fileFormats.js'
 
 // DataIngest's File and File Type (a custom field, see builtinKinds.js): the
 // file is read when it's chosen, and its data kept, not the file. Choosing
@@ -19,8 +19,8 @@ const detectedFormat = computed(() => ingest.value && formatFromName(ingest.valu
 const fileSummary = computed(() => {
   const { fileName, fileSize, format, tables } = ingest.value
   const rows = (n) => `${n.toLocaleString()} ${n === 1 ? 'row' : 'rows'}`
-  const count = FILE_FORMATS[format].multi
-    ? `${tables.length} ${format === 'xlsx' ? 'sheets' : 'tables'}, ${rows(tables.reduce((n, t) => n + t.rowCount, 0))}`
+  const count = hasTables(ingest.value)
+    ? `${tables.length} ${format === 'xlsx' ? 'sheets' : FILE_FORMATS[format].multi === 'layers' ? 'layers' : 'tables'}, ${rows(tables.reduce((n, t) => n + t.rowCount, 0))}`
     : rows(tables[0]?.rowCount ?? 0)
   return `${fileName} · ${formatSize(fileSize)} · ${FILE_FORMATS[format].label}, ${count}`
 })
@@ -66,8 +66,8 @@ const ids = { file: `${uid}-file`, fileNote: `${uid}-file-note`, format: `${uid}
       <p v-if="fileError" class="flow-field-error">{{ fileError }}</p>
       <p v-if="ingest" class="flow-field-hint">{{ fileSummary }}</p>
       <p v-else class="flow-field-hint">
-        CSV, TSV, JSON, GeoJSON, Parquet, Excel (.xlsx) or SQLite. Its data is read and kept;
-        the file itself isn't.
+        CSV, TSV, JSON, Parquet, Excel (.xlsx), SQLite, or geometry: GeoJSON, KML, a zipped
+        shapefile, GeoPackage or FlatGeobuf. Its data is read and kept; the file itself isn't.
       </p>
     </div>
     <button

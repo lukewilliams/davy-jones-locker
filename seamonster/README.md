@@ -80,6 +80,10 @@ lib/
   jsSandbox.js          runs a JavaScript node's code in a sandboxed iframe's worker
   fileFormats.js        the file formats DataIngest reads and DataExport writes
   xlsx.js               a workbook's sheet names, and repairing DuckDB-wasm's xlsx output
+  zip.js                reading and writing zips (shapefiles, in and out)
+  geoExport.js          DataExport's GeoJSON, KML, GeoPackage and shapefiles
+  crs.js                what GDAL and PROJ say about a CRS (its WKT, datum, a dropped datum shift)
+  spatialChecks.js      warnings about spatial SQL: measuring in degrees, a dropped datum shift
   nodeKinds.js          import node kinds from here: the registry, with the built-ins defined in it
   kindRegistry.js       the registry: defineNodeKind, defineNodeCategory, node IDs, reference names
   builtinKinds.js       SEAMONSTER's own kinds (SQLQuery, JavaScript, DataIngest...), defined like an app's
@@ -212,8 +216,9 @@ run whole graphs, for scheduled runs.
 `FlowgraphEditor`'s `server` prop is the server engine as the host app sees it:
 
 ```
-status                      reactive { state, address, assistant }: state
-                            `checking`, `connected` or `unavailable`;
+status                      reactive { state, address, local, assistant }: state
+                            `checking`, `connected` or `unavailable`; local
+                            true for a server in local development mode;
                             assistant { model, sampleRows } or null
 query({ sql, inputs })      -> Promise<Uint8Array>  the result, as Parquet
 runPython({ code, inputs }) -> Promise<{ output, value?, variables?, error?, table? }>
@@ -229,7 +234,7 @@ its `inputs` are `[{ ref, id, slot, pin, bytes }]` (or with `tables: [{ name,
 bytes }]`), `files` its file fields' files `[{ key, bytes }]`, and `outputs`
 what it made, `[{ slot, bytes }]` or with `tables`, slot null for its first. DAVY JONES' LOCKER's app shell supplies one
 (`createEngineClient({ url, name })`), which asks the engine's `GET /health`
-for `{ status: 'ok', host?, port? }` every 5 s while it answers, every 15 s
+for `{ status: 'ok', host?, port?, local? }` every 5 s while it answers, every 15 s
 while it doesn't (and not while the page is hidden). What it changes:
 
 - Bottom left, in the window's edge gap: "LIVE · connected to server
@@ -237,6 +242,10 @@ while it doesn't (and not while the page is hidden). What it changes:
   execution only" in SQLQuery's blue. Its dot blinks (at 2 Hz) only while the
   server is connected and the graph has a node that runs on it, so a blink
   always means some data will go to the server; otherwise it's steady.
+  "· LOCAL" follows the address when the server is in local development mode
+  (`status.local`: it signs no one in, and node kinds that run on it can
+  reach the network), and the app's log in the Terminal warns so on
+  connecting.
 - A node that runs on the server shows "Backend not available." as its status
   while it's away, and a blinking dot, top right in its label's colour
   ("Executes on server"), while it's there. Manage notes that running it
@@ -250,14 +259,22 @@ while it doesn't (and not while the page is hidden). What it changes:
 query(sql)                -> Promise<{ columns, rows }>   plain values in the rows
 registerFile(name, bytes) / readFile(name) / dropFile(name)
                              files its SQL reads and writes by name
-readSqlite(bytes) / writeSqlite(tables)                    SQLite files (optional)
+readSqlite(bytes) / writeSqlite(tables, { statements })   SQLite files (optional)
+loadSpatial()                load DuckDB's spatial extension (optional)
 ```
+
+The runner calls `loadSpatial` before reading Parquet that holds geometry
+(GeoParquet `geo` metadata). Read without the extension, a geometry
+column's CRS stays spelt out in full (PROJJSON), and DuckDB then treats it as
+a different CRS from the same one by name (`EPSG:4326`). The table still
+loads if the extension doesn't; only spatial SQL on it fails.
 
 DAVY JONES' LOCKER's app shell supplies `duckdbSql`: DuckDB-wasm, with
 sql.js for SQLite (DuckDB's sqlite extension can't reach browser files), both
-imported from jsDelivr when first needed and never bundled. It turns Arrow's
-values into plain ones: BIGINTs to numbers, dates and timestamps to ISO text,
-decimals to scaled text.
+imported from jsDelivr when first needed and never bundled. Its spatial
+extension comes from the app's own origin, loaded when first needed. It turns
+Arrow's values into plain ones: BIGINTs to numbers, dates and timestamps to
+ISO text, decimals to scaled text.
 
 [graphRunner.js](lib/graphRunner.js) does the rest, in DuckDB
 SQL:
@@ -286,14 +303,38 @@ SQL:
   shown in the Data panel (pretty-printed JSON, or its `repr`), and the node
   has no rows. `print()` output goes to Terminal, as does the traceback, with
   the script's own lines only. Ctrl+Enter in the editor saves and runs.
+  Geometry travels as GeoParquet, so where the server's runner has
+  geopandas, an input with geometry is a GeoDataFrame with each column's
+  CRS, and a GeoDataFrame (or GeoSeries) returned comes back as `GEOMETRY`
+  with its CRS; without geopandas, geometry is WKB bytes (DAVY JONES' LOCKER's
+  engine README, "Python and geometry").
 - **DataIngest** reads its file when it's chosen, not when it runs: CSV, TSV,
-  JSON, GeoJSON (a column per property, geometry as GeoJSON text), Parquet,
-  Excel (a table per sheet, first row as headers, values not formulas) or
-  SQLite (a table per table). Each table is kept as Parquet in the host's
+  JSON, Parquet, Excel (a table per sheet, first row as headers, values not
+  formulas), SQLite (a table per table), or a geo file (below). Each table is kept as Parquet in the host's
   storage (`putFile` / `getFile` / `deleteFile`; IndexedDB in DAVY JONES'
   LOCKER's), and the file itself isn't kept. File Type defaults to the extension;
   changing it re-reads the file if it was chosen this session, else asks for
   it again.
+- **Geo files**: GeoJSON, KML, a zipped shapefile (one or more `.shp` with
+  their `.shx`, `.dbf` and `.prj`), GeoPackage and FlatGeobuf, read with
+  DuckDB's spatial extension (`ST_Read`). Each layer is a table: one layer is
+  the node's table, and several (a KML's folders, a GeoPackage's layers) are
+  several tables, as a workbook's sheets are. Holes, multi-part features and
+  points are kept as they are. A feature's geometry is a `GEOMETRY` column
+  called `geometry` (unless the file has a column of that name), with its
+  CRS in the type: KML and GeoJSON `EPSG:4326`, a shapefile's from its
+  `.prj`, a GeoPackage's per layer. A shapefile without a `.prj` has none
+  (plain `GEOMETRY`), and stays that way: nothing assumes longitude and
+  latitude; nor does a GeoPackage's "undefined" SRS (`srs_id` -1 or 0),
+  which GDAL reports as a CRS of that name. Heights that are all 0 (KML
+  writes them) are dropped, so a geometry is 3D only when its heights mean
+  something. GDAL's own feature numbers (`OGC_FID`) are left out. In SQL,
+  spatial functions work with x, y axis order whatever the CRS says
+  (`ST_Transform(geometry, 'EPSG:7855')` needs no `always_xy`), as on the
+  engine. A GeoPackage without GDAL's feature counts (`gpkg_ogr_contents`)
+  can't be read here: DuckDB-wasm's GDAL then reads it on a thread, which it
+  can't start. Graphs from before 0.4 keep what they read then: a GeoJSON's
+  geometry as GeoJSON text.
 - **Several tables** (Excel and SQLite, even with one sheet or table): each
   is named by its sheet or table name as an identifier (`toIdentifier`:
   lower case, each run of anything but letters and digits as one `_`, none at
@@ -309,15 +350,33 @@ SQL:
   on hover. The names are fixed when the file is read: choosing a file whose
   sheets were renamed renames the tables, and code naming the old ones fails.
 - **DataExport** writes a node wired into it to a file, as its File Type or
-  the filename's extension (CSV if neither): CSV, TSV, JSON, GeoJSON (needs a
-  geometry column), Parquet, Excel (one table) or SQLite (every table). With
+  the filename's extension (CSV if neither): CSV, TSV, JSON (geometry as
+  WKT), Parquet (GeoParquet with geometry), Excel (one table), SQLite (every
+  table; geometry as WKT, blobs as blobs), or a geo format ([geoExport.js](lib/geoExport.js)):
+  - **GeoJSON** (one table) and **KML** (every table, a folder each):
+    longitude and latitude by their standards, so geometry is transformed
+    from its CRS, and refused when it has none. KML takes `name` and
+    `description` columns as each placemark's own, and the rest as
+    ExtendedData.
+  - **GeoPackage** (every table, a layer each; one without geometry an
+    attributes table) and **Shapefile (.zip)** (every table, a shapefile
+    each): the CRS kept, its WKT and EPSG code as GDAL reports them, and
+    none when it's unknown (`srs_id` -1, no `.prj`). A shapefile holds one
+    geometry column of one kind (points, lines or polygons), with its rings
+    turned the way shapefiles want them; its dBase fields are cut to 10
+    characters in the name and 254 bytes of text (UTF-8, as the `.cpg`
+    says).
+
+  A table's geometry is its column called `geometry`, or else its first.
+  They're assembled in JavaScript, since DuckDB-wasm's GDAL corrupts what it
+  writes. With
   one node wired in, that one; with several, the one named under **Input**
   (shown only then): its reference name, its ID, or `<name>.<table>` for one
   table of several, typed or chosen from a list (an editor menu, badged by
   category, like the right-click ones; Alt+Down opens it). It downloads when
   the node itself is run, not when it runs upstream of another, and passes the
-  input on unchanged. A table that came with GeoParquet `geo` metadata (below)
-  is written with it. DuckDB-wasm's xlsx files come out with a stray byte ahead
+  input on unchanged. Parquet keeps each geometry column's CRS (below).
+  DuckDB-wasm's xlsx files come out with a stray byte ahead
   of the zip, which Excel calls corrupt; `repairXlsx` cuts it (and leaves a
   correct file alone).
 - **JavaScript** runs its code in [jsSandbox.js](lib/jsSandbox.js):
@@ -333,13 +392,62 @@ SQL:
   failure fails too.
 - Results are pages of 100 rows plus a count; the Data panel's pager re-runs
   the node for another page.
-- **A geometry's CRS travels with its table** as GeoParquet `geo` metadata
-  (each geometry column's encoding and CRS), through the browser as well as
-  on the wire. DuckDB keeps a Parquet file's rows but not its metadata, so
-  the runner keeps the `geo` of each table loaded with some (a server kind's
-  output, a GeoParquet file read by DataIngest) and writes it back whenever
-  that table goes out as Parquet again: to a server kind, to PythonScript, or
-  from DataExport. A SQL query's output doesn't carry it yet (roadmap 8g).
+- **Spatial warnings** ([spatialChecks.js](lib/spatialChecks.js)): a
+  SQLQuery that runs but likely doesn't mean what it says gets a warning
+  (the run's `warnings`), and so does DataExport's GeoJSON and KML:
+  - **Measuring in degrees:** `ST_Area`, `ST_Length`, `ST_Perimeter`,
+    `ST_Distance`, `ST_DWithin` or `ST_Buffer` on geometry in a longitude
+    and latitude CRS, pointing to the `_Spheroid` function or a projected
+    CRS.
+  - **A dropped datum shift:** `ST_Transform` between datums PROJ joins only
+    by a null transformation (WGS 84 ↔ GDA2020, GDA94 ↔ WGS 84, NAD27 ↔
+    NAD83 without grids), so coordinates are carried over unchanged. A
+    GeoJSON or KML export from such a CRS too, since those formats are
+    WGS 84. GDA94 → GDA2020, which PROJ shifts, doesn't warn.
+  - **A target with no datum:** `ST_Transform` to a PROJ string that names
+    only an ellipsoid (`+proj=tmerc ... +ellps=GRS80`, no `+datum`,
+    `+towgs84` or `+nadgrids`), constant or built per row. PROJ applies no
+    datum shift, so the result stays on the source's datum, which the
+    warning names. It can't know which datum the projection was meant for,
+    so it warns even when the source is already on it: naming the target in
+    WKT or PROJJSON, which carry their datum, silences it (and from another
+    datum, PROJ then shifts properly).
+  - **The `_Spheroid` functions given the wrong coordinates:** with
+    `ST_FlipCoordinates` (they take longitude first here, so flipped they
+    return NaN, silently), or on a projected CRS.
+
+  The calls come from DuckDB's parse of the query, and each geometry
+  argument's type (its CRS) from DuckDB describing that argument selected
+  from the same FROM. A null transformation is found by transforming a
+  point in the CRS's area of use between the two geographic CRSs and seeing
+  it not move ([crs.js](lib/crs.js)), since DuckDB's spatial doesn't say
+  which operation PROJ picks or how accurate it's rated. What can't be
+  worked out (a server table's types, an alias from the same SELECT) gets
+  no warning; a check never stops a run.
+- **Geometry in Data:** a geometry column's header has its types and CRS
+  (`POLYGON · EPSG:4326`, or "CRS unknown"), and how many of its geometries
+  are invalid or empty (in amber). A cell says what its geometry is, not
+  its bytes: its type, and its area or length on the ellipsoid
+  (`POLYGON · 1.75 ha`, `LINESTRING · 550 m`), with its WKT on hover. One
+  whose CRS isn't known shows its type alone; without the spatial
+  extension, cells show WKT.
+- **A geometry's CRS travels with its table.** In SQL it's on the column's
+  type (`GEOMETRY('EPSG:7855')`): a column passed through keeps its CRS,
+  `ST_Transform` gives its target's, and mixing CRSs is refused ("Cannot call
+  function 'ST_Intersects' with geometries of different coordinate reference
+  systems"). On the wire it's GeoParquet `geo` metadata, written by DuckDB
+  whenever a table goes out as Parquet (to the server, to PythonScript, to a
+  server kind, from DataExport, and DataIngest's stored tables), and read
+  back onto the type when one comes in. Two exceptions to DuckDB's own
+  handling:
+  - **No CRS stays no CRS.** DuckDB leaves `crs` out for a column with none,
+    and GeoParquet reads that as OGC:CRS84 (longitude and latitude), so the
+    runner writes such a file again with `"crs": null` (`writeParquet`).
+  - **OGC:CRS84 is read as `EPSG:4326`**, the same coordinates in x, y order.
+    DuckDB-wasm's spatial extension fails on CRS84 ("stoi: no conversion"),
+    even opening a file that has it, so the runner reads `geo` itself, with
+    DuckDB's GeoParquet reading off (`readParquet`). The engine does the
+    same, so both give a column the same type.
 
 Run state lives in the graph store (`run`), not in the saved document:
 statuses and results start empty whenever a graph is opened. A status is
@@ -351,6 +459,104 @@ node back to not run. Nodes show their status top left, and wires take their
 colours from it (see the roadmap's wire table; stale counts as not run).
 Unavailable buttons use `aria-disabled` rather than `disabled`, which would
 drop keyboard focus, and with it the editor's hotkeys.
+
+### Limits of files
+
+Everything known not to work, or to change data on the way, in one place
+(most of it from DuckDB-wasm and its GDAL; ROADMAP's 8g has the findings).
+
+**Reading (DataIngest)**
+- **Not read:** KMZ (zipped KML), File Geodatabase (the browser's GDAL has
+  no OpenFileGDB driver), and formats GDAL has but DataIngest doesn't offer
+  yet (GML, GPX, DXF, MapInfo). A shapefile must come zipped, with its
+  `.shx` and `.dbf`; a bare `.shp` isn't read.
+- **Zips:** stored or deflated members only; no Zip64 (over 4 GB) and no
+  encrypted members. `__MACOSX/` is skipped, and a zip with no `.shp` is
+  refused.
+- **GeoPackage** needs GDAL's feature counts (`gpkg_ogr_contents`): without
+  them DuckDB-wasm's GDAL reads on a thread, which it can't start ("thread
+  constructor failed"). GDAL, QGIS and DataExport write them; saving the
+  file again with QGIS or ogr2ogr adds them. Its "undefined" SRS
+  (`srs_id` -1 or 0) is read as no CRS.
+- **KML:** each placemark's `name` and `description` only. GDAL's KML
+  reader skips ExtendedData, so other fields (DataExport's included) don't
+  come back. Heights that are all 0 are dropped.
+- **Shapefile** without a `.prj`: no CRS.
+- **GeoParquet:** only WKB columns are geometry; GeoParquet 1.1's native
+  encodings (`point`, `polygon`...) stay as they are. No `crs` means
+  OGC:CRS84, read as `EPSG:4326`; an explicit null means no CRS.
+- **Geo files need the spatial extension**, served by the app (DAVY JONES'
+  LOCKER's README, "DuckDB's extensions").
+- **Excel:** the first row is the column names; values, not formulas.
+- **SQLite:** blobs become `\x…` hex text.
+- **GDAL's feature numbers** (`OGC_FID`) are left out.
+
+**Writing (DataExport)**
+- **One table:** CSV, TSV, JSON, Parquet, Excel, GeoJSON. **Every table:**
+  SQLite, KML, GeoPackage, Shapefile (.zip).
+- **CSV, TSV, JSON, Excel and SQLite** write geometry as WKT, without its
+  CRS. SQLite keeps blobs as blobs, and writes lists and structs as JSON
+  text.
+- **GeoJSON and KML** are longitude and latitude only: geometry is
+  transformed, and a column with no CRS is refused. KML heights are written
+  with no `altitudeMode`, so viewers put them on the ground.
+- **GeoPackage:** no spatial index (R-tree); a layer of mixed types is
+  `GEOMETRY`; one geometry column per layer, any others as WKT text;
+  timestamps, lists and structs as text; a CRS without an EPSG code gets an
+  `srs_id` from 100000.
+- **Shapefile:** one geometry column of one kind (points, lines or
+  polygons), or it's refused; no geometry collections; M values dropped;
+  an empty geometry becomes a null shape; field names cut to 10 ASCII
+  characters (others become `_`), text to 254 bytes, reals to 15 decimals;
+  timestamps and lists as text. The `.prj` is OGC WKT 1, which GDAL and
+  QGIS read; ArcGIS writes its own flavour.
+- **The browser's GDAL writers aren't used** (they corrupt what they write
+  in DuckDB-wasm), so these formats are SEAMONSTER's own writers.
+- **On the engine** (whole-graph runs), DataExport writes CSV, TSV, JSON and
+  Parquet only, and its CSV quotes every field.
+
+**In SQL**
+- **In the browser, use `EPSG:4326`, not `OGC:CRS84`:** DuckDB-wasm's
+  spatial fails on CRS84 ("stoi: no conversion"); the two are the same
+  coordinates in Flow's x, y order.
+- **No datum grids** in either engine: a transformation that needs one
+  (GDA94 ↔ GDA2020 by grid, NAD27 ↔ NAD83) uses PROJ's grid-free choice,
+  the same in both.
+- **The engine reads no files** (`ST_Read` and the other readers are
+  refused): read them with DataIngest and wire them in.
+- **The `_Spheroid` functions take longitude first** (x, y), as everything
+  here does: `ST_Area_Spheroid(geometry)` on `EPSG:4326` or `EPSG:7844` is
+  right as it is. `ST_FlipCoordinates` before them, which plain DuckDB
+  without `geometry_always_xy` needs, gives NaN (a warning says so).
+- **`ST_Transform(geometry, source, target)` returns no CRS:** the explicit
+  source wins over the column's, but the result is plain `GEOMETRY`, so
+  later nodes see "CRS unknown" (GeoJSON and KML exports refuse it).
+  `ST_Transform(geometry, target)` on a column with its CRS keeps one; use
+  `ST_SetCRS` after the three-argument form to put it back.
+- **A target that isn't a fixed authority code** (a PROJ string, WKT, or
+  anything built per row) works only in the three-argument form, on
+  geometry with no CRS on its type (`ST_GeomFromWKB` of the bytes, say). On
+  a column with its CRS, the target must be a constant DuckDB recognises
+  (`'EPSG:7855'`); a PROJ string there is refused ("not a recognized
+  coordinate reference system").
+- **Spatial warnings** are worked out in the browser, for SQL run from the
+  editor (here or on the server); a whole-graph run on the engine has none.
+  They can't name PROJ's chosen operation or its rated accuracy, only that
+  the datum shift is dropped, and a transformation that does shift, but is
+  rated at 1 m or worse, gets none. Geometry whose type can't be worked out
+  (a server table, an alias from the same SELECT) isn't checked.
+
+**In Python (PythonScript)**
+- **Geometry is a GeoDataFrame only where the server's runner has
+  geopandas** (the framework's runner doesn't: an app adds it). Without it,
+  geometry arrives as WKB bytes, and a DataFrame returned with those bytes
+  comes back as a blob column, not geometry, with no CRS.
+- **Return geometry as a GeoDataFrame or GeoSeries**, with its CRS set
+  (`set_crs` or `to_crs`). A GeoDataFrame's `crs` of None comes back as no
+  CRS. Shapely objects in a plain column (not a GeoSeries) can't be
+  returned, and the run fails.
+- **GeoParquet's native encodings** (GeoParquet 1.1's `point`,
+  `polygon`...) aren't read as geometry; geopandas writes WKB, which is.
 
 ## Defining node kinds
 
@@ -390,6 +596,7 @@ colour (`label`, white by default).
 | | |
 |---|---|
 | `kind` | lowercase letters, digits and hyphens, with one dot at most (`sql-query`, `geo.double`) |
+| `description` | what it does, in a sentence or two: Manage shows it above the node's fields, and the Library when its card is hovered |
 | `idPrefix` | new nodes' IDs are `<idPrefix><n>`; by default the label, lowercase without spaces (`double1`) |
 | `run(ctx)` | runs it in the browser; without it, the node says it can't run yet |
 | `runs` | whether Manage shows Auto Run and Run; by default, whether there's a `run` |
@@ -399,7 +606,7 @@ colour (`label`, white by default).
 | `canRun(data)` | a reason it can't run yet (shown under Run), or null |
 | `runHint` | the line under Run (where results go, by default) |
 | `slots` | its outputs beyond the first, `[{ name, label?, pin? }]` or a function of the node's data (below) |
-| `inputPins` | named input pins beside the main one, `[{ name, label?, many? }]` or a function of the data (below) |
+| `inputPins` | named input pins beside the main one, `[{ name, label?, many?, hint?, required? }]` or a function of the data (below) |
 
 **`ctx`**, what `run` is given:
 
@@ -417,6 +624,7 @@ colour (`label`, white by default).
 | `parquetOf(table)` | one table as Parquet (bytes) |
 | `loadParquet(table, bytes)`, `loadRows(table, rows)` | create a table from Parquet, or from rows |
 | `serverTables(query)` | the tables a query reads that no input supplies |
+| `spatialWarnings(query)` | warnings about a query's spatial SQL (see "Spatial warnings"), `[text]`; never throws |
 
 **What `run` returns** (or throws, for an error):
 
@@ -427,6 +635,7 @@ colour (`label`, white by default).
 | `value` | a value that isn't a table, shown in Data. With no table, downstream reads an empty one |
 | `export` | `{ filename, contentType, size, bytes }`: a file, saved when this node is the one run |
 | `output` | what it printed, for the Terminal |
+| `warnings` | `[text]`: it ran, but something's likely wrong. In the Terminal (amber), and on the node's badge while that run is current |
 | `error` | why it failed |
 
 Anything else it returns stays on the result (PythonScript's `variables`).
@@ -503,7 +712,14 @@ defineNodeKind({
 - **Inputs** come through the main input pin, any number of wires. A kind's
   `inputPins` add named ones for inputs with a role (`ctx.inputs[i].pin` says
   which pin each came through); a named pin takes one wire unless it says
-  `many: true`. Users don't add input pins.
+  `many: true`. Users don't add input pins. A pin's `hint` shows when it's
+  hovered, after its label ("Site: the boundary to summarise around;
+  optional"). A `required: true` pin with nothing wired in stops the node
+  running: its ring shows hollow red even when the node isn't hovered, its
+  face and Manage say "Site: wire a node into this input first.", Run is
+  refused, and so is a run from downstream. Pins are optional by default.
+- **A node of a kind this app doesn't have** (a placeholder) keeps every wire
+  it was saved with, into named input pins as well as out of named slots.
 - **Handles:** the main pins are `source-0` and `target-0`, as before, so saved
   graphs load unchanged; the others are named, `source:<slot>` and
   `target:<name>`, so reordering pins never rewires a graph.
@@ -583,7 +799,8 @@ newest at the bottom.
   counts the repeat (×2), so an unchanged failing node shows its error once.
 - The app's log has the server connecting and going away, and Execute
   Graph's summary. A host adds to it with the graph store's `log(text,
-  type)`, type being `'info'` (the default), `'error'` or `'note'`; the
+  type)`, type being `'info'` (the default), `'error'`, `'warning'` or
+  `'note'`; the
   entries are in `logs.app`, and each node's in `logs.nodes[id]`.
 - Turning pages in Data doesn't log (it runs the node through `turnPage`).
   Logs aren't saved, like run state.

@@ -5,9 +5,18 @@ User SQL is user code, so each session is locked down before any runs: no
 files, no new extensions, no new attachments, settings frozen. DuckDB's
 lockdown doesn't stop postgres_scan() reaching another server by connection
 string, so a query must also pass check_query: a single SELECT, calling none of
-the functions that open connections or run SQL given as text.
+the functions that open connections or run SQL given as text, nor the spatial
+extension's file readers (the lockdown already refuses them; geo files are
+read in the browser).
 
-Tables are exchanged as Arrow (in) and Parquet (on the wire). Like the browser
+The spatial extension is loaded before the lockdown, with x, y axis order
+whatever a CRS's official order (geometry_always_xy), as in the browser.
+
+Tables are exchanged as Arrow (in) and Parquet (on the wire). Geometry keeps
+its CRS both ways: GeoParquet's `geo` metadata becomes geoarrow fields, which
+DuckDB loads as GEOMETRY('EPSG:7855'), and a GEOMETRY column's CRS is written
+back as `geo` metadata, as DuckDB's own Parquet writer does in the browser.
+Like the browser
 (seamonster's lib/graphRunner.js), each node's output is a table in OUTPUTS, and a
 query sees its inputs through INPUTS (a view per input, named by its
 reference name) or, for an input with several tables, a schema of that name.
@@ -33,10 +42,28 @@ OUTPUTS = "flow_out"
 INPUTS = "flow_in"
 CATALOG = "db"  # the attached query database
 GEO_KEY = b"geo"  # GeoParquet's metadata key
+# How DuckDB exchanges GEOMETRY as Arrow: WKB, with the CRS as PROJJSON.
+EXTENSION_NAME = b"ARROW:extension:name"
+EXTENSION_METADATA = b"ARROW:extension:metadata"
+GEOARROW_WKB = b"geoarrow.wkb"
+# GeoParquet's CRS for a column whose metadata has no `crs` key.
+DEFAULT_CRS = "OGC:CRS84"
+# What it's loaded as with the spatial extension, as the browser does (whose
+# spatial can't identify OGC:CRS84): the same coordinates in x, y order.
+LONGITUDE_LATITUDE = "EPSG:4326"
+# ST_GeometryType's names, as GeoParquet spells them.
+GEOMETRY_TYPES = {
+    "POINT": "Point", "LINESTRING": "LineString", "POLYGON": "Polygon", "MULTIPOINT": "MultiPoint",
+    "MULTILINESTRING": "MultiLineString", "MULTIPOLYGON": "MultiPolygon", "GEOMETRYCOLLECTION": "GeometryCollection",
+}
 
 # Functions that open connections or run SQL given as text.
 BLOCKED_FUNCTIONS = {"query", "query_table"}
 BLOCKED_PREFIXES = ("postgres_",)
+# The spatial extension's readers: files and URLs (through GDAL's drivers).
+FILE_FUNCTIONS = {"st_read", "st_read_meta", "st_readosm", "st_readshp", "shapefile_meta"}
+
+_spatial_missing = False  # set once LOAD spatial has failed, so it's logged once
 
 
 class QueryError(ValueError):
@@ -76,6 +103,41 @@ def from_parquet(data: bytes) -> pa.Table:
     return pq.read_table(io.BytesIO(data))
 
 
+def _is_crs84(crs) -> bool:
+    if isinstance(crs, dict):
+        crs_id = crs.get("id") or {}
+        return crs_id.get("authority") == "OGC" and str(crs_id.get("code")) == "CRS84"
+    return crs == DEFAULT_CRS
+
+
+def _geometry_fields(table: pa.Table, spatial: bool) -> pa.Table:
+    """`table` with the WKB columns its GeoParquet `geo` metadata names as
+    geoarrow fields, each with its CRS: the PROJJSON given, none for an
+    explicit null (unknown), and OGC:CRS84 when there's no `crs` key
+    (GeoParquet's rule), which with spatial loaded is EPSG:4326, as in the
+    browser. Metadata DuckDB can't use leaves the table as it is."""
+    try:
+        columns = json.loads((table.schema.metadata or {}).get(GEO_KEY) or b"{}").get("columns") or {}
+    except (ValueError, AttributeError):
+        return table
+    if not isinstance(columns, dict):
+        return table
+    fields = []
+    for field in table.schema:
+        info = columns.get(field.name)
+        if (isinstance(info, dict) and str(info.get("encoding", "")).upper() == "WKB"
+                and (pa.types.is_binary(field.type) or pa.types.is_large_binary(field.type))):
+            crs = info.get("crs", DEFAULT_CRS)
+            if spatial and _is_crs84(crs):
+                crs = LONGITUDE_LATITUDE
+            extension = {} if crs is None else {"crs": crs, **({"crs_type": "projjson"} if isinstance(crs, dict) else {})}
+            field = field.with_metadata({
+                **(field.metadata or {}), EXTENSION_NAME: GEOARROW_WKB, EXTENSION_METADATA: json.dumps(extension).encode(),
+            })
+        fields.append(field)
+    return pa.Table.from_arrays(table.columns, schema=pa.schema(fields, metadata=table.schema.metadata))
+
+
 def _walk(value, visit):
     if isinstance(value, dict):
         visit(value)
@@ -106,6 +168,7 @@ class Session:
                     "Is the database running?"
                 ) from e
             search_path += f",{CATALOG}.public"
+        self.spatial = _load_spatial(con)
         for schema in (INPUTS, OUTPUTS):
             con.execute(f"CREATE SCHEMA {schema}")
         # Unqualified names: inputs first, then the query database's public schema.
@@ -116,11 +179,6 @@ class Session:
         con.execute("SET lock_configuration = true")
         self._input_views: list[str] = []
         self._input_schemas: list[str] = []
-        # GeoParquet's `geo` metadata (each geometry column's encoding and
-        # CRS), by table, for tables loaded with it. A DuckDB table keeps the
-        # rows but not the metadata, so arrow() puts it back. A query's
-        # output has none.
-        self._geo: dict[str, bytes] = {}
 
     def close(self) -> None:
         self.con.close()
@@ -159,27 +217,74 @@ class Session:
             name = str(node.get("function_name", "")).lower()
             if name and (name in BLOCKED_FUNCTIONS or name.startswith(BLOCKED_PREFIXES)):
                 raise QueryError(f"{name}() can't be used on the server: query the tables in {CATALOG} instead.")
+            if name in FILE_FUNCTIONS:
+                raise QueryError(
+                    f"{name}() can't be used on the server, which reads no files. "
+                    "Read the file with DataIngest and wire it in."
+                )
 
         _walk(tree, visit)
 
     # ---- Tables ----
 
     def load(self, target: str, table: pa.Table) -> None:
-        """Create table `target` (quoted, qualified) from Arrow."""
-        self.con.register("__flow_load", table)
+        """Create table `target` (quoted, qualified) from Arrow: from Parquet
+        with `geo` metadata, its geometry as GEOMETRY with each column's CRS."""
+        self.con.register("__flow_load", _geometry_fields(table, self.spatial))
         try:
             self.con.execute(f"CREATE TABLE {target} AS SELECT * FROM __flow_load")
         finally:
             self.con.unregister("__flow_load")
-        geo = (table.schema.metadata or {}).get(GEO_KEY)
-        if geo:
-            self._geo[target] = geo
 
-    def arrow(self, table: str) -> pa.Table:
-        """A table as Arrow, with its `geo` metadata if it was loaded with some."""
-        result = self.con.execute(f"SELECT * FROM {table}").to_arrow_table()
-        geo = self._geo.get(table)
-        return result.replace_schema_metadata({**(result.schema.metadata or {}), GEO_KEY: geo}) if geo else result
+    def arrow(self, table: str, geometry_as_text: bool = False) -> pa.Table:
+        """A table as Arrow; with `geometry_as_text`, each GEOMETRY column as
+        WKT, as DuckDB writes it to CSV and JSON (the browser's DataExport)."""
+        columns = "*"
+        if geometry_as_text:
+            described = self.con.execute(f"DESCRIBE SELECT * FROM {table}").fetchall()
+            columns = ", ".join(
+                f"ST_AsText({quote(name)}) AS {quote(name)}" if re.match(r"GEOMETRY(\(|$)", kind) else quote(name)
+                for name, kind, *_ in described
+            )
+        return self.con.execute(f"SELECT {columns} FROM {table}").to_arrow_table()
+
+    def parquet(self, table: str) -> bytes:
+        """A table as Parquet. With geometry it's GeoParquet: each GEOMETRY
+        column's CRS (PROJJSON) in its `geo` metadata, or an explicit null when
+        the column has none, since no `crs` would mean OGC:CRS84."""
+        result = self.arrow(table)
+        columns = {}
+        fields = []
+        for field in result.schema:
+            metadata = field.metadata or {}
+            if metadata.get(EXTENSION_NAME) == GEOARROW_WKB:
+                crs = json.loads(metadata.get(EXTENSION_METADATA) or b"{}").get("crs")
+                if isinstance(crs, str) and crs.startswith("{"):
+                    crs = json.loads(crs)
+                columns[field.name] = {"encoding": "WKB", "geometry_types": self._geometry_types(table, field.name), "crs": crs}
+                # The file says it once, in `geo`, as DuckDB's Parquet does.
+                field = field.with_metadata({k: v for k, v in metadata.items() if k not in (EXTENSION_NAME, EXTENSION_METADATA)})
+            fields.append(field)
+        if columns:
+            geo = {"version": "1.0.0", "primary_column": next(iter(columns)), "columns": columns}
+            schema = pa.schema(fields, metadata={**(result.schema.metadata or {}), GEO_KEY: json.dumps(geo).encode()})
+            result = pa.Table.from_arrays(result.columns, schema=schema)
+        return to_parquet(result)
+
+    def _geometry_types(self, table: str, column: str) -> list[str]:
+        """The geometry types in a column, as GeoParquet lists them ("Polygon
+        Z"). Empty, meaning not known, without the spatial extension."""
+        if not self.spatial:
+            return []
+        c = quote(column)
+        rows = self.con.execute(
+            f"SELECT DISTINCT ST_GeometryType({c}), ST_HasZ({c}), ST_HasM({c}) FROM {table} WHERE {c} IS NOT NULL"
+        ).fetchall()
+        names = {
+            GEOMETRY_TYPES.get(str(kind), str(kind).title()) + (" ZM" if z and m else " Z" if z else " M" if m else "")
+            for kind, z, m in rows
+        }
+        return sorted(names)
 
     def row_count(self, table: str) -> int:
         return self.con.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
@@ -217,7 +322,32 @@ class Session:
             except duckdb.InterruptException:
                 raise
             except duckdb.Error as e:
+                if not self.spatial and "spatial extension" in str(e):
+                    raise QueryError(
+                        "This query uses spatial SQL, which this engine can't run: "
+                        "its DuckDB spatial extension isn't installed."
+                    ) from e
                 raise QueryError(scrub(str(e))) from e
+
+
+def _load_spatial(con: duckdb.DuckDBPyConnection) -> bool:
+    """LOAD spatial, installed with the engine (its image installs it at
+    build), and x, y axis order. False, logged once, if it isn't installed:
+    the engine still runs SQL, just not spatial SQL."""
+    global _spatial_missing
+    try:
+        con.execute("LOAD spatial")
+        con.execute("SET geometry_always_xy = true")
+        return True
+    except duckdb.Error as e:
+        if not _spatial_missing:
+            _spatial_missing = True
+            log.warning(
+                "DuckDB's spatial extension couldn't load, so spatial SQL won't run on the engine (%s). "
+                "Install it once: python -c \"import duckdb; duckdb.sql('INSTALL spatial')\"",
+                str(e).splitlines()[0],
+            )
+        return False
 
 
 def database_tables() -> dict[str, list[tuple[str, str]]]:
@@ -254,4 +384,4 @@ def run_query(query: str, inputs: dict[str, bytes]) -> bytes:
         session.expose(exposed)
         target = f"{OUTPUTS}.{quote('result')}"
         session.run_query(query, target)
-        return to_parquet(session.arrow(target))
+        return session.parquet(target)
