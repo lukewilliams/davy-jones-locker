@@ -1,14 +1,20 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, inject } from 'vue'
 import FlowPanel from '../components/FlowPanel.vue'
 import NodeFace from '../components/NodeFace.vue'
+import { FLOW_GRAPH } from '../lib/flowGraph.js'
 import { kindsInCategory, NODE_CATEGORIES, NODE_KIND_DRAG_TYPE, NODE_KINDS } from '../lib/nodeKinds.js'
 
 // The node palette: every kind by category, as cards to drag onto the canvas.
 // A card is the node's real face, scaled down. Kinds and categories defined
 // later (see kindRegistry.js) join it; a category with no kinds isn't shown.
+// Inside a subnet, its Input and Output nodes come first.
+const graph = inject(FLOW_GRAPH)
 const sections = computed(() =>
-  NODE_CATEGORIES.map((category) => ({ ...category, kinds: kindsInCategory(category.id) })).filter((s) => s.kinds.length),
+  [
+    ...(graph.levels.value.length > 1 ? [{ id: 'boundary', label: 'Subnet' }] : []),
+    ...NODE_CATEGORIES,
+  ].map((category) => ({ ...category, kinds: kindsInCategory(category.id) })).filter((s) => s.kinds.length),
 )
 
 function onDragStart(kind, e) {

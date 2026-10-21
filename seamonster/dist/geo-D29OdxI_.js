@@ -120,8 +120,13 @@ var p = {
 	opacity: 1,
 	fillOpacity: .2,
 	radius: 5
+}, m = {
+	color: "#ffd400",
+	weight: 4,
+	opacity: 1,
+	fillOpacity: .35
 };
-function m(e) {
+function h(e) {
 	let t = {
 		...p,
 		...e ?? {}
@@ -132,4 +137,4 @@ function m(e) {
 	};
 }
 //#endregion
-export { m as a, i as c, f as i, s as l, d as n, l as o, u as r, r as s, p as t };
+export { f as a, r as c, u as i, i as l, m as n, h as o, d as r, l as s, p as t, s as u };

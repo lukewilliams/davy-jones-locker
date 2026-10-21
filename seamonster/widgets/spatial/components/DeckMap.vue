@@ -4,7 +4,7 @@ import { Deck, WebMercatorViewport } from '@deck.gl/core'
 import { BitmapLayer, GeoJsonLayer } from '@deck.gl/layers'
 import { TileLayer } from '@deck.gl/geo-layers'
 import { useSpatialData } from '../useSpatialData.js'
-import { combineBounds, featureBounds, hexToRgba, resolveStyle } from '../geo.js'
+import { combineBounds, featureBounds, hexToRgba, resolveStyle, SELECTED_STYLE } from '../geo.js'
 
 const props = defineProps({
   // [{ id, format, url | data, style, visible }] — see fromRows.
@@ -21,6 +21,9 @@ const props = defineProps({
     }),
   },
   autoFit: { type: Boolean, default: true },
+  // Features to highlight, as LeafletMap's: [{ layer, feature }].
+  selected: { type: Array, default: () => [] },
+  selectedStyle: { type: Object, default: () => SELECTED_STYLE },
 })
 
 const emit = defineEmits(['error', 'ready', 'feature-click'])
@@ -59,20 +62,30 @@ function basemapLayer() {
 }
 
 function dataLayers() {
+  const picked = resolveStyle(props.selectedStyle)
   return resolved.value.map(({ layer, data }) => {
     const s = resolveStyle(layer.style)
+    // Selected features take selectedStyle; none selected keeps plain values.
+    const selection = props.selected.filter((sel) => sel.layer === layer.id)
+    const isSelected = (f) => selection.some((sel) => sel.feature === null || sel.feature === undefined || sel.feature === f.id)
+    const pick = (plain, highlighted) => (selection.length ? (f) => (isSelected(f) ? highlighted : plain) : plain)
     return new GeoJsonLayer({
       id: `wsp-${layer.id}`,
       data,
       pickable: true,
       stroked: true,
       filled: true,
-      getFillColor: hexToRgba(s.fillColor, s.fillOpacity),
-      getLineColor: hexToRgba(s.color, s.opacity),
-      getLineWidth: s.weight,
+      getFillColor: pick(hexToRgba(s.fillColor, s.fillOpacity), hexToRgba(picked.fillColor, picked.fillOpacity)),
+      getLineColor: pick(hexToRgba(s.color, s.opacity), hexToRgba(picked.color, picked.opacity)),
+      getLineWidth: pick(s.weight, picked.weight),
       lineWidthUnits: 'pixels',
       getPointRadius: s.radius,
       pointRadiusUnits: 'pixels',
+      updateTriggers: {
+        getFillColor: JSON.stringify(selection),
+        getLineColor: JSON.stringify(selection),
+        getLineWidth: JSON.stringify(selection),
+      },
       onClick: (info) => emit('feature-click', { layer, feature: info.object }),
     })
   })

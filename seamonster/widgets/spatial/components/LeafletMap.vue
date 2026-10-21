@@ -2,7 +2,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import L from 'leaflet'
 import { useSpatialData } from '../useSpatialData.js'
-import { combineBounds, featureBounds, resolveStyle } from '../geo.js'
+import { combineBounds, featureBounds, resolveStyle, SELECTED_STYLE } from '../geo.js'
 
 const props = defineProps({
   // [{ id, format, url | data, style, visible }] — see fromRows.
@@ -21,6 +21,11 @@ const props = defineProps({
   },
   // Fit the view to the layers the first time any of them load.
   autoFit: { type: Boolean, default: true },
+  // Features to highlight: [{ layer, feature }], a layer's id and a feature's
+  // GeoJSON `id` (null for every feature in the layer). Changing it restyles
+  // them without drawing the layers again.
+  selected: { type: Array, default: () => [] },
+  selectedStyle: { type: Object, default: () => SELECTED_STYLE },
 })
 
 const emit = defineEmits(['error', 'ready', 'feature-click'])
@@ -30,6 +35,7 @@ const container = ref(null)
 // Leaflet objects mutate themselves constantly and must never be wrapped in a
 // reactive proxy, so these are plain variables rather than refs.
 let map = null
+let resizer = null
 const overlays = new Map()
 let fitted = false
 
@@ -81,7 +87,31 @@ function sync() {
     overlays.set(id, overlay)
   }
 
+  highlight()
   if (props.autoFit && !fitted) fit()
+}
+
+// Restyle the highlighted features: those in `selected` take selectedStyle
+// and come to the front; the ones before go back to their layer's style.
+// One newly highlighted that's out of view is panned to.
+let highlighted = []
+function highlight({ pan = false } = {}) {
+  for (const { overlay, featureLayer } of highlighted) overlay.resetStyle(featureLayer)
+  highlighted = []
+  const style = leafletStyle(props.selectedStyle)
+  for (const { layer, feature } of props.selected) {
+    const overlay = overlays.get(layer)
+    overlay?.eachLayer((featureLayer) => {
+      if (feature !== null && feature !== undefined && featureLayer.feature?.id !== feature) return
+      featureLayer.setStyle(style)
+      featureLayer.bringToFront()
+      highlighted.push({ overlay, featureLayer })
+    })
+  }
+  if (!pan || !map || !highlighted.length) return
+  const bounds = L.latLngBounds([])
+  for (const { featureLayer } of highlighted) bounds.extend(featureLayer.getBounds?.() ?? featureLayer.getLatLng())
+  if (bounds.isValid() && !map.getBounds().intersects(bounds)) map.panTo(bounds.getCenter())
 }
 
 function fit() {
@@ -109,12 +139,20 @@ onMounted(() => {
   }).addTo(map)
 
   sync()
+  // Leaflet sizes itself once; a container that resizes (a panel) needs telling.
+  resizer = new ResizeObserver(() => map?.invalidateSize())
+  resizer.observe(container.value)
   emit('ready', map)
 })
 
 watch(resolved, sync)
+watch(
+  () => props.selected,
+  () => highlight({ pan: true }),
+)
 
 onBeforeUnmount(() => {
+  resizer?.disconnect()
   map?.remove()
   map = null
   overlays.clear()

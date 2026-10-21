@@ -33,8 +33,8 @@ const props = defineProps({
   collapsed: { type: Boolean, default: false },
   // A single key that toggles the panel like a title click (see panelLayout's onKeydown).
   hotkey: { type: String, default: null },
-  // Left panels only, and only the last ones: stop above the bottom panel while
-  // it's open, which then runs underneath.
+  // Left or right panels, and only the last ones on their side (the innermost):
+  // stop above the bottom panel while it's open, which then runs underneath.
   aboveBottom: { type: Boolean, default: false },
 })
 

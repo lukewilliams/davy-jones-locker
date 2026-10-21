@@ -40,7 +40,7 @@ and its image starts from the framework's ([Dockerfile](Dockerfile)), adding
 that entry point:
 
 ```dockerfile
-FROM ghcr.io/lukewilliams/davy-jones-locker-engine:0.3.0
+FROM ghcr.io/lukewilliams/davy-jones-locker-engine:0.3.1
 COPY main.py ./
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "3000"]
 ```
@@ -55,7 +55,7 @@ published to GitHub's container registry for each release, from 0.2.0, for
 | `ghcr.io/lukewilliams/davy-jones-locker-runner` | [runner/Dockerfile](runner/Dockerfile) |
 | `ghcr.io/lukewilliams/davy-jones-locker-node-worker` | [nodeworker/Dockerfile](nodeworker/Dockerfile) |
 
-Each is tagged with the version (`0.3.0`) and its minor (`0.3`); there's no
+Each is tagged with the version (`0.3.1`) and its minor (`0.3`); there's no
 `latest`, so an app says which version it builds on. Or build them yourself
 from this folder (`docker build -t davy-jones-locker-engine .`, and `-f
 runner/Dockerfile` or `-f nodeworker/Dockerfile` for the others), as
@@ -118,8 +118,9 @@ A graph run (`/execute`, `/graphs/{id}/execute`, e.g. from n8n) runs `targets`
 (default: every node with Auto Run on) and everything upstream, as the browser
 does, and answers `{ runId, status, failed, results }`: per node `{ status,
 error? | rowCount, output?, value?, export? }`, an export's file as
-`{ filename, contentType, size, base64 }`. Runs are recorded in `runs` when
-there's a database. On the server:
+`{ filename, contentType, size, base64 }`. Nodes inside subnets are in
+`results` too, by path (`screening/classify`), and a target can be one.
+Runs are recorded in `runs` when there's a database. On the server:
 
 | Kind | |
 |---|---|
@@ -128,6 +129,7 @@ there's a database. On the server:
 | DataIngest | from its tables stored with `PUT /files/{key}` (the keys in the node's `ingest.tables`) |
 | DataExport | to CSV, TSV, JSON (geometry as WKT, as in the browser) or Parquet (GeoParquet), returned in the result. The geo formats are written in the browser only, for now. Its CSV quotes every field (pyarrow's writer), which the browser's doesn't |
 | The app's own | by the node worker; a file field's file comes from the stored files (`PUT /files/{key}`) |
+| Subnet | its graph (inline, or shared from the document's `subnets`), run as it is: what's wired into its pins is put out by its Input nodes, and its Output nodes are its outputs, the topmost first. Errors name where they started (`Screening › Classify: …`); 8 levels deep at most. As in the browser (SEAMONSTER's README, "Subnets") |
 | JavaScript | refused: browser only until the engine has safeguards for it |
 | anything else | can't run on the server yet |
 
@@ -403,7 +405,7 @@ that work with the framework's pandas and pyarrow), compile it with hashes
 as the framework's is, and install it in an image built on the runner's:
 
 ```dockerfile
-FROM ghcr.io/lukewilliams/davy-jones-locker-runner:0.3.0
+FROM ghcr.io/lukewilliams/davy-jones-locker-runner:0.3.1
 USER root
 COPY runner/requirements.txt /tmp/app-requirements.txt
 RUN pip install --no-cache-dir --require-hashes -r /tmp/app-requirements.txt && rm /tmp/app-requirements.txt

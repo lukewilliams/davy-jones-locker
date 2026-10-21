@@ -27,7 +27,8 @@ export const NODE_CATEGORIES = shallowReactive([
 export const NODE_KINDS = shallowReactive({})
 
 // Categories the canvas colours but nobody defines: a subnet's Input and
-// Output nodes, and placeholders for kinds this app doesn't have.
+// Output nodes (the Library and menus offer them only inside a subnet), and
+// placeholders for kinds this app doesn't have.
 const RESERVED_CATEGORIES = new Set(['boundary', 'unknown'])
 
 const KIND_NAME = /^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)?$/
@@ -90,6 +91,11 @@ export function defineNodeCategory({ id, label, colors }) {
  *               function of the data. `hint` shows when the pin is hovered;
  *               a `required` pin with nothing wired in stops the node running
  *               (its face and Manage say so, and its ring shows hollow red)
+ *   mainInput   the main input pin: 'many' wires (the default), 'one', or
+ *               false for none (a subnet's inputs are all named pins)
+ *   mainOutput  false for no main output pin (an Output node, whose output
+ *               leaves its subnet instead)
+ *   create()    data a new node of the kind starts with (a subnet's graph)
  */
 
 /*
@@ -194,7 +200,7 @@ export function defineNodeKind(definition) {
   }
   if (isKnownKind(kind)) throw new Error(`There's already a node kind called ${kind}.`)
   if (!label) throw new Error(`Node kind ${kind} needs a label.`)
-  if (!NODE_CATEGORIES.some((c) => c.id === category)) {
+  if (category !== 'boundary' && !NODE_CATEGORIES.some((c) => c.id === category)) {
     throw new Error(`Node kind ${kind} is in category "${category}", which isn't defined.`)
   }
   if (definition.description !== undefined && typeof definition.description !== 'string') {
@@ -207,6 +213,9 @@ export function defineNodeKind(definition) {
   if (Array.isArray(definition.slots)) checkPins(kind, 'slot', definition.slots)
   else if (definition.slots !== undefined && typeof definition.slots !== 'function') {
     throw new Error(`Node kind ${kind}'s slots must be a list, or a function of the node's data.`)
+  }
+  if (![undefined, 'many', 'one', false].includes(definition.mainInput)) {
+    throw new Error(`Node kind ${kind}'s mainInput must be 'many', 'one' or false.`)
   }
   if (Array.isArray(definition.inputPins)) checkPins(kind, 'input pin', definition.inputPins)
   else if (definition.inputPins !== undefined && typeof definition.inputPins !== 'function') {
@@ -235,7 +244,8 @@ export function withDefaults(data) {
 
 // Whether editing a data key leaves a node's output as it was: its name, Auto
 // Run, what's worked out from its settings, or a field that says so.
-const COSMETIC_KEYS = new Set(['label', 'autoRun', 'sqlServerTables'])
+// `panels` is panels' own data on a node (flowGraph's setPanelData).
+const COSMETIC_KEYS = new Set(['label', 'autoRun', 'sqlServerTables', 'panels'])
 export const isCosmetic = (kind, key) =>
   COSMETIC_KEYS.has(key) || kindInfo(kind).fields?.some((f) => f.key === key && f.affectsOutput === false) || false
 
@@ -361,12 +371,13 @@ export function slotsOf(id, data) {
   ]
 }
 
-// A node's output pins, top to bottom: the main one, carrying every slot,
-// then one per slot that has its own. Each is { handle, slots }.
+// A node's output pins, top to bottom: the main one, carrying every slot
+// (unless its kind has none), then one per slot that has its own. Each is
+// { handle, slots }.
 export function outputPinsOf(id, data) {
   const slots = slotsOf(id, data)
   return [
-    { handle: 'source-0', slots },
+    ...(isKnownKind(data.kind) && NODE_KINDS[data.kind].mainOutput === false ? [] : [{ handle: 'source-0', slots }]),
     ...slots.filter((s) => s.pin).map((s) => ({ handle: `source:${s.name}`, slots: [s] })),
   ]
 }
@@ -380,12 +391,15 @@ export function slotsThrough(handle, id, data) {
   return slots.filter((s) => s.name === name)
 }
 
-// A node's input pins, top to bottom: the main one, then its kind's named
-// ones, each { handle, name, label, many, hint, required }.
+// A node's input pins, top to bottom: the main one (unless its kind has
+// none), then its kind's named ones, each { handle, name, label, many, hint,
+// required }.
 export function inputPinsOf(data) {
-  const named = isKnownKind(data.kind) ? listOf(NODE_KINDS[data.kind].inputPins, withDefaults(data)) : []
+  const known = isKnownKind(data.kind)
+  const named = known ? listOf(NODE_KINDS[data.kind].inputPins, withDefaults(data)) : []
+  const main = known ? (NODE_KINDS[data.kind].mainInput ?? 'many') : 'many'
   return [
-    { handle: 'target-0', name: null, label: null, many: true, hint: null, required: false },
+    ...(main ? [{ handle: 'target-0', name: null, label: null, many: main === 'many', hint: null, required: false }] : []),
     ...named.map((p) => ({
       handle: `target:${p.name}`, name: p.name, label: p.label ?? p.name, many: !!p.many,
       hint: p.hint ?? null, required: !!p.required,

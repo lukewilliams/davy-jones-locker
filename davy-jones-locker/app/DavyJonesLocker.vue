@@ -2,7 +2,8 @@
 // An app's whole window: SEAMONSTER's FlowgraphEditor with the framework's parts
 // wired in: the engine (engineClient.js), its own node kinds (serverKinds.js),
 // SQL in the browser (duckdbSql.js) and storage (localGraphStorage.js).
-// Anything else FlowgraphEditor takes (title, theme) passes straight through.
+// Anything else FlowgraphEditor takes (title, theme) passes straight through,
+// and so does its `panels` slot (the app's own panels).
 import { FlowgraphEditor } from 'seamonster'
 import { createEngineClient } from './engineClient.js'
 import { defineServerKinds } from './serverKinds.js'
@@ -29,5 +30,9 @@ const sql = createDuckdbSql({ extensionRepository: props.extensionRepository })
 </script>
 
 <template>
-  <FlowgraphEditor :storage="storage" :sql="sql" :server="server" />
+  <FlowgraphEditor :storage="storage" :sql="sql" :server="server">
+    <template v-if="$slots.panels" #panels>
+      <slot name="panels" />
+    </template>
+  </FlowgraphEditor>
 </template>

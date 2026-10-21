@@ -10,14 +10,14 @@ its own entry:
 
 | Import | What |
 |---|---|
-| `seamonster` | the flowgraph editor: `FlowgraphEditor`, `defineTheme`, and everything in `/panels` |
+| `seamonster` | the flowgraph editor: `FlowgraphEditor`, its panels (`EditorPanels`, `DataPanel`...), `defineTheme`, and everything in `/panels` |
 | `seamonster/panels` | the editor's docked panels over any content: `PanelHost`, `FlowPanel` ([widgets/panels](widgets/panels/README.md)); no Vue Flow needed |
 | `seamonster/menu` | declarative, context-sensitive context menus ([widgets/menu](widgets/menu/README.md)) |
 | `seamonster/controls` | control panels: selects and checkbox groups ([widgets/controls](widgets/controls/README.md)) |
 | `seamonster/doc` | markdown documents ([widgets/doc](widgets/doc/README.md)) |
 | `seamonster/scene` | a 3D scene, on TresJS ([widgets/scene](widgets/scene/README.md)) |
 | `seamonster/sheet` | spreadsheet tables ([widgets/sheet](widgets/sheet/README.md)) |
-| `seamonster/spatial` | maps, with `/leaflet` and `/deck` renderers ([widgets/spatial](widgets/spatial/README.md)) |
+| `seamonster/spatial` | maps, with `/leaflet` and `/deck` renderers, and the editor's Map panel in `/leaflet` ([widgets/spatial](widgets/spatial/README.md)) |
 | `seamonster/style.css` | every widget's CSS, once, before the app's own |
 
 SEAMONSTER has no server, storage or commands of its own: the host supplies
@@ -50,12 +50,14 @@ styles.css              the editor's tokens (--flow-*) and rules
 widgets/                what a host uses whole
   FlowgraphEditor.vue   the editor: a PanelHost with the canvas, title, panels and menus
   panels/               PanelHost: panels, rails and their keys over any content (seamonster/panels)
+  EditorPanels.vue      the five below, in order: the editor's panels unless the host gives its own
   TerminalPanel.vue     left panels, in this order (T): the selected node's log, or the app's
   LibraryPanel.vue        (L): node cards to drag onto the canvas
   FlowgraphsPanel.vue     (G): Execute Graph
   DataPanel.vue         bottom panel (D): the selected node's output (a tab per table)
   ManagePanel.vue       right panel (M): the selected node's properties
   menu/ controls/ doc/ scene/ sheet/ spatial/   the other widgets, each with its README
+                        (spatial/ has the Map panel, a panel for the editor's `panels` slot)
 components/             what the editor is built from
   FlowCanvas.vue        the pannable layer: Vue Flow, with its nodes and wires
   FlowNode.vue          a node: its face, pins, kind tag and output hint
@@ -69,14 +71,17 @@ components/             what the editor is built from
   NodeProperties.vue    Manage's fields: ID, Name, each kind's own, Run
   AssistantField.vue    Manage's AI assistant, above a node's SQL or code
   NodeField.vue         one of a kind's declared fields in Manage (text, number, select, code, file...)
-  DataIngestFields.vue, ExportInputField.vue   the built-ins' custom fields (file chooser, Input picker)
+  DataIngestFields.vue, ExportInputField.vue, SubnetFields.vue   the built-ins' custom fields (file chooser, Input picker, a subnet's Open, pins and graph)
   ServerStatus.vue      bottom left: the server connected (green) or not (blue)
   flowMenus.js          the graph's context menus and their commands
 lib/
   flowGraph.js          the graph: nodes, wires, edits, runs, stored files (one per window)
+  flowGraphKey.js       its injection key (FLOW_GRAPH), for panels outside the editor's entry
+  results.js            a run result's tables, one at a time or all of them
   graphDocument.js      the graph as a saved document, and back
   graphStorage.js       loads the graph from the host's storage, saves edits to it
-  graphRunner.js        runs nodes (and their upstream) on the host's SQL engine
+  graphRunner.js        runs nodes (and their upstream) on the host's SQL engine, subnets level by level
+  subnets.js            subnets: their graphs, pins (from Input and Output nodes) and paths
   jsSandbox.js          runs a JavaScript node's code in a sandboxed iframe's worker
   fileFormats.js        the file formats DataIngest reads and DataExport writes
   xlsx.js               a workbook's sheet names, and repairing DuckDB-wasm's xlsx output
@@ -191,6 +196,11 @@ by [graphDocument.js](lib/graphDocument.js):
   "viewport": { "x": 415, "y": 355, "zoom": 1 }
 }
 ```
+
+A subnet node keeps its graph in its data (`subnet`: `{ nodes, edges,
+viewport }`, the same shape), or names a shared one (`subnetRef`), which the
+document keeps under `subnets`, by name, only when there are any (see
+Subnets). A document without subnets saves exactly as before.
 
 Loading drops nodes with no ID, kind or position, and wires to nodes that
 aren't there, so stale or hand-edited documents still open. A node of a kind
@@ -391,7 +401,10 @@ SQL:
 - Other kinds fail with "… nodes can't run yet.", and anything downstream of a
   failure fails too.
 - Results are pages of 100 rows plus a count; the Data panel's pager re-runs
-  the node for another page.
+  the node for another page. Clicking a row picks it (highlighted; click it
+  again to unpick), for panels that follow it, like the Map panel; picking
+  one elsewhere (a feature on the map) turns Data to its page and scrolls to
+  it.
 - **Spatial warnings** ([spatialChecks.js](lib/spatialChecks.js)): a
   SQLQuery that runs but likely doesn't mean what it says gets a warning
   (the run's `warnings`), and so does DataExport's GeoJSON and KML:
@@ -546,6 +559,24 @@ Everything known not to work, or to change data on the way, in one place
   rated at 1 m or worse, gets none. Geometry whose type can't be worked out
   (a server table, an alias from the same SELECT) isn't checked.
 
+**On the map (the Map panel)**
+- **A geometry column with no CRS isn't drawn** ("CRS unknown"): give it one
+  with `ST_SetCRS`. One PROJ can't transform to longitude and latitude isn't
+  drawn either, and the panel says why.
+- **The first 10,000 rows** of each geometry column are drawn (the
+  `featureLimit` prop), and the first 200 rows of a layers table; a note
+  says when there are more. A layers table's `data` is drawn as GeoJSON
+  is, in longitude and latitude, whatever its source was.
+- **Leaflet only:** there's no deck.gl Map panel yet, for more features
+  than Leaflet draws smoothly.
+- **Each run reads every output table's geometry** as GeoJSON while a Map
+  panel is there, so runs with large geometry tables take longer.
+- **A node that ran before the Map panel was mounted** isn't drawn until it
+  runs again (results aren't saved, so this is only when a host adds the
+  panel while the editor is open).
+- **The map's view isn't saved** with the graph: an opened graph fits its
+  first layers again.
+
 **In Python (PythonScript)**
 - **Geometry is a GeoDataFrame only where the server's runner has
   geopandas** (the framework's runner doesn't: an app adds it). Without it,
@@ -557,6 +588,63 @@ Everything known not to work, or to change data on the way, in one place
   returned, and the run fails.
 - **GeoParquet's native encodings** (GeoParquet 1.1's `point`,
   `polygon`...) aren't read as geometry; geopandas writes WKB, which is.
+
+## Subnets
+
+A **Subnet** node (Custom) is a graph of its own, run as one node (roadmap
+10c, [subnets.js](lib/subnets.js)). A new one starts as an Input wired to an
+Output, so it's one in, one out, and passes its input through.
+
+- **Opening one:** double-click it, press Enter with it selected, Open subnet
+  in Manage, or its menu. Its graph takes the canvas, with a breadcrumb after
+  the title (`Graph › Screening`); Escape or the breadcrumb goes back up, with
+  the subnet selected. Everything works inside as at the top: the Library and
+  menus (which add **Input** and **Output** there, under Subnet), Manage,
+  Data, the Terminal, running, undo (each level its own).
+- **Pins:** each Input node inside is an input pin on the subnet node, and
+  each Output node an output, named by the node's ID, top to bottom (then
+  left to right). An Input pin takes one wire, and the Input puts out the
+  first slot it carries. The topmost Output is the subnet's first slot, read
+  downstream as `<subnet id>_<output id>`; any others are slots of their own,
+  each with its own pin too, and the main output pin carries them all.
+  Renaming an Input or Output renames its pin, and the wires to it follow;
+  deleting one drops the wires to its pin.
+- **Running:** the subnet's graph runs as it is, not flattened, with what's
+  wired into its pins put out by its Input nodes. Inside, nodes are known by
+  path (`screening/classify`): their results and tables are kept so, and
+  each shows its status and output when the subnet is open. Running a node
+  inside runs what's upstream of it at every level (the subnet's inputs
+  first), but not the rest of the subnet. An error says where it started:
+  `Screening › Classify: …`. Subnets nest, up to 8 deep (a shared subnet that
+  contains itself stops there).
+- **Stale:** an edit inside makes the subnet stale, with what's downstream of
+  it, at every level up; changing what's wired into a subnet makes
+  everything inside it stale.
+- **Shared subnets:** Manage's Graph shares a subnet's graph under a name
+  (the document keeps it under `subnets`), so other Subnet nodes can use the
+  same graph (Graph > Shared: name), or take a copy of their own. Editing a
+  shared graph changes every use, and each one goes stale.
+
+The graph store has it as API: `levels` (the levels open: `{ depth, label,
+shared }`, the top first), `openSubnet(id)` (returns an error message or
+null), `closeSubnet(depth?)` (one up by default), `library` (the shared
+graphs), `shareSubnet(id, name)` and `useSubnet(id, name | null)`. Its
+other methods take the open level's IDs; `run.status`, `run.results` and
+`logs.nodes` show the open level's nodes by ID, and the runner and the
+store keep them by path. DAVY JONES' LOCKER's engine runs subnets the
+same way (its README, "API").
+
+Known limits:
+
+- **The open level isn't saved:** reopening the page shows the top level.
+- **Deleting an Input or Output drops its subnet's wires to that pin**
+  (every use, for a shared one), and undoing the deletion brings the node
+  back, not those wires. Moving another Output above the first changes
+  which one is first: wires from the new first one's own pin go.
+- **Renaming an Input or Output doesn't rewrite code** that reads it
+  (`site_data`), as for any node.
+- **Shared subnets no one uses stay in the document;** there's no way to
+  delete one yet.
 
 ## Defining node kinds
 
@@ -607,6 +695,9 @@ colour (`label`, white by default).
 | `runHint` | the line under Run (where results go, by default) |
 | `slots` | its outputs beyond the first, `[{ name, label?, pin? }]` or a function of the node's data (below) |
 | `inputPins` | named input pins beside the main one, `[{ name, label?, many?, hint?, required? }]` or a function of the data (below) |
+| `mainInput` | the main input pin: `'many'` wires (the default), `'one'`, or `false` for none (a Subnet's inputs are all named pins) |
+| `mainOutput` | `false` for no main output pin (an Output node, whose output leaves its subnet instead) |
+| `create()` | data a new node of the kind starts with (a Subnet's graph) |
 
 **`ctx`**, what `run` is given:
 
@@ -625,6 +716,7 @@ colour (`label`, white by default).
 | `loadParquet(table, bytes)`, `loadRows(table, rows)` | create a table from Parquet, or from rows |
 | `serverTables(query)` | the tables a query reads that no input supplies |
 | `spatialWarnings(query)` | warnings about a query's spatial SQL (see "Spatial warnings"), `[text]`; never throws |
+| `runSubnet()`, `boundInput` | the built-in Subnet and Input kinds' (see Subnets) |
 
 **What `run` returns** (or throws, for an error):
 
@@ -771,17 +863,71 @@ axis), `minWidth` (200), `minHeight` (140), `collapsed` (initial), `hotkey`
 (a single key), `aboveBottom` (see below). Panels register with the layout
 of the `PanelHost` around them: `FlowgraphEditor` is a PanelHost, and any app
 can use one to put the same panels over its own content (a map, a scene),
-from `seamonster/panels` ([widgets/panels](widgets/panels/README.md)). Left
-panels sit side by side in the order they appear in the host's template.
-`FLOW_GRAPH` and `PANEL_LAYOUT` (the stores FlowgraphEditor provides) are
-exported so a host's own panels can follow the selection. Letting a host add,
-move or replace the editor's own panels is still to come (roadmap S4).
+from `seamonster/panels` ([widgets/panels](widgets/panels/README.md)). Panels
+on one side sit side by side, from the edge inwards, in the order they
+appear in the host's template. Names must be unique.
 
-The panels are Terminal, Library and Flowgraphs on the left, Data at the
-bottom and Manage on the right. All but Manage start collapsed. Flowgraphs is
-`aboveBottom`: it sits above Data, which runs underneath it. (Terminal was
-called Console in 0.1; it was renamed so it isn't mistaken for the
-browser's DevTools console, and its hotkey moved from C to T.)
+The editor's panels are Terminal, Library and Flowgraphs on the left, Data at
+the bottom and Manage on the right. All but Manage start collapsed.
+Flowgraphs is `aboveBottom`: it sits above Data, which runs underneath it.
+(Terminal was called Console in 0.1; it was renamed so it isn't mistaken for
+the browser's DevTools console, and its hotkey moved from C to T.)
+
+**A host's own panels** go in FlowgraphEditor's `panels` slot (DAVY JONES'
+LOCKER's `DavyJonesLocker` passes it through). Filled, the slot replaces the
+editor's panels, so a host that adds to them puts `EditorPanels` (all five,
+in their usual order) beside its own:
+
+```vue
+<script setup>
+import { EditorPanels, FlowgraphEditor } from 'seamonster'
+import { MapPanel } from 'seamonster/spatial/leaflet'
+</script>
+
+<template>
+  <FlowgraphEditor :storage="storage" :sql="sql">
+    <template #panels>
+      <EditorPanels />
+      <MapPanel dock="right" aboveBottom />
+    </template>
+  </FlowgraphEditor>
+</template>
+```
+
+To move, reorder or leave out the editor's panels, list them one by one
+instead: `TerminalPanel`, `LibraryPanel`, `FlowgraphsPanel`, `DataPanel` and
+`ManagePanel` are exported too, and FlowPanel's props given to one replace
+its own (`<ManagePanel dock="left" />`, `<DataPanel :collapsed="false" />`).
+A panel of the host's own is a `FlowPanel` (above), or any component whose
+root is one, like the [Map panel](widgets/spatial/README.md#the-map-panel).
+A hotkey stays with the first panel to register it: a later one with the
+same key gets none, and the console says so.
+
+The graph store (`FLOW_GRAPH`, injected; `PANEL_LAYOUT` is the layout's) has
+what a host's panels need to follow the editor:
+
+- `selectedNode` (a computed node, or null) and `select(id)`.
+- `run.results[id]`, a node's last result (see Running nodes).
+- `dataView`: what Data shows of the selected node, `{ node, slot, table,
+  row }`: the slot's and table's tabs open (null for the first) and the row
+  picked (counting from 0 in the whole table; null for none). It goes back
+  to the first tabs and no row when another node is selected.
+- `showRow({ id, slot, table, row })`: picks a row in Data, selecting the
+  node, opening its tabs and turning to the row's page (a run, like the
+  pager's).
+- `addOutputReader(name, read)`: `read({ table, columns, query })` runs on
+  every output table as its node runs, while the table is there (they're
+  dropped by the next run): `table` is its name to put in SQL, `columns`
+  `[{ name, type, crs }]` (`crs` undefined for a column that isn't geometry,
+  null for geometry with none), and `query(sql)` the SQL engine's. What it
+  returns is kept beside the table's page as `extras[name]` (or `{ error }`
+  if it throws), held as it is rather than made reactive. A node that ran
+  before the reader was added has nothing from it until it runs again.
+  Returns a function that removes it.
+- `setPanelData(id, panel, value)`: a panel's own data on a node, in its
+  `data.panels[panel]` (null removes it). It's saved with the graph, follows
+  the node through renames, deletion and undo, and leaves the node fresh,
+  not stale.
 
 **The Terminal's logs.** Each node has a log, and so does the app. The
 Terminal shows the selected node's, or the app's when nothing is selected,
@@ -808,13 +954,15 @@ newest at the bottom.
 The behaviour lives in [panelLayout.js](lib/panelLayout.js):
 
 - **Linked** (the default): panels share the window. Left panels sit side by
-  side, right panels are full height, and the bottom panel fills the width
-  between them. Each resizes on one axis only, from the edge facing the canvas.
+  side from the left edge, right panels from the right, and the bottom panel
+  fills the width between them. Each resizes on one axis only, from the edge facing the canvas.
   A linked panel only makes room for other linked panels.
-- **Above the bottom panel:** the last left panels can be `aboveBottom`. While
-  the bottom panel is open (and linked) they stop above it, and it extends left
-  underneath them; resizing the bottom panel moves their bottom edge, down to
-  their minimum height. With the bottom panel closed they're full height.
+- **Above the bottom panel:** the last panels on either side (the innermost)
+  can be `aboveBottom`. While the bottom panel is open (and linked) they stop
+  above it, and it extends underneath them, as far as the side's other
+  panels, which stay full height at the edge. Resizing the bottom panel moves
+  their bottom edge, down to their minimum height. With the bottom panel
+  closed they're full height.
 - **Unlinked** (the link button, or Ctrl+Space on the active panel): the panel
   floats. It moves by dragging its title and resizes from every edge and
   corner. Its size and position are saved to localStorage, as fractions of the
@@ -829,7 +977,7 @@ The behaviour lives in [panelLayout.js](lib/panelLayout.js):
   rail too, so a covered panel can still be reached. A rail click behaves like
   a title click. With `autoHideRails` off (a FlowgraphEditor prop), every
   panel keeps its rail, open or collapsed.
-- **Hotkeys:** a panel's own key (T, L, G, D, M) acts like a rail click:
+- **Hotkeys:** a panel's own key (T, L, G, D, M; the Map panel's P) acts like a rail click:
   opens it, brings it to the front if it's covered, or else collapses it.
   Ignored with Ctrl, Cmd or Alt held, or while typing in a field.
 - **Ctrl+Space** with no panel active (after clicking the canvas) collapses all
@@ -853,7 +1001,7 @@ the editor's root through `MenuHost`, and regions opt in with `v-menu`:
 
 - Panel titles and rails: `PANEL_MENU`, with the panel's name as context.
 - Canvas: Nodes (categories with colour badges, then node types) and Panels.
-- Nodes and wires: `NODE_MENU` and `WIRE_MENU` (Delete), with the ID as context.
+- Nodes and wires: `NODE_MENU` (Open subnet, for a subnet; Reset; Delete) and `WIRE_MENU` (Delete), with the ID as context.
 - A wire dropped on empty canvas: `CONNECTION_MENU`, opened from code with
   `MenuHost`'s `open()`.
 

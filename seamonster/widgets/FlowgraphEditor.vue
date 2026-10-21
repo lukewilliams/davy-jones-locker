@@ -3,17 +3,13 @@ import { computed, provide, ref } from 'vue'
 import { vMenu } from './menu/index.js'
 import PanelHost from './panels/PanelHost.vue'
 import FlowCanvas from '../components/FlowCanvas.vue'
-import TerminalPanel from './TerminalPanel.vue'
-import LibraryPanel from './LibraryPanel.vue'
-import FlowgraphsPanel from './FlowgraphsPanel.vue'
-import DataPanel from './DataPanel.vue'
-import ManagePanel from './ManagePanel.vue'
+import EditorPanels from './EditorPanels.vue'
 import ServerStatus from '../components/ServerStatus.vue'
 import { createPanelLayout } from '../lib/panelLayout.js'
 import { createFlowGraph, FLOW_GRAPH } from '../lib/flowGraph.js'
 import { useGraphStorage } from '../lib/graphStorage.js'
 import { hasTheme, resolveTheme } from '../lib/themes.js'
-import { CONNECTION_MENU, createFlowMenus, OPEN_MENU } from '../components/flowMenus.js'
+import { createFlowMenus, OPEN_MENU } from '../components/flowMenus.js'
 
 const props = defineProps({
   // Where the open graph is kept between visits, supplied by the host app:
@@ -51,7 +47,7 @@ const graph = createFlowGraph({ sql: props.sql, files: props.storage, server: pr
 provide(FLOW_GRAPH, graph)
 useGraphStorage(graph, props.storage)
 
-const { commands, canvasMenu } = createFlowMenus(layout, graph)
+const { commands, canvasMenu, connectionMenu } = createFlowMenus(layout, graph)
 
 const host = ref(null)
 
@@ -65,7 +61,7 @@ function onKeydown(e) {
 
 // A wire dragged from a pin was dropped on empty canvas: offer a node to create there.
 function onConnectionDropped(context) {
-  host.value.open(context.point, { items: CONNECTION_MENU, context })
+  host.value.open(context.point, { items: connectionMenu, context })
 }
 
 // Other components open menus at a point too (Manage's pickers), so they look
@@ -94,15 +90,29 @@ provide(OPEN_MENU, (point, menu) => host.value.open(point, menu))
       <span class="flow-title flow-pan-trigger">
         <span class="flow-brand-text flow-title-text">{{ title }}</span>
       </span>
+      <!-- Inside a subnet: the levels open, each a way back up to it. -->
+      <nav v-if="graph.levels.value.length > 1" class="flow-breadcrumb" aria-label="Subnets open">
+        <template v-for="level in graph.levels.value" :key="level.depth">
+          <span v-if="level.depth" aria-hidden="true">›</span>
+          <button
+            type="button"
+            class="flow-breadcrumb-level"
+            :aria-current="level.depth === graph.levels.value.length - 1 ? 'page' : undefined"
+            :title="level.depth === graph.levels.value.length - 1 ? undefined : 'Back up to here (Escape: one level up)'"
+            @click="graph.closeSubnet(level.depth)"
+          >
+            {{ level.label ?? 'Graph' }}<span v-if="level.shared" class="flow-breadcrumb-shared"> ({{ level.shared }})</span>
+          </button>
+        </template>
+      </nav>
     </template>
 
-    <!-- Linked left panels sit side by side in this order. -->
+    <!-- The host's panels, or else the editor's own. Linked left panels sit
+         side by side in the order they're here. -->
     <template #panels>
-      <TerminalPanel />
-      <LibraryPanel />
-      <FlowgraphsPanel />
-      <DataPanel />
-      <ManagePanel />
+      <slot name="panels">
+        <EditorPanels />
+      </slot>
       <ServerStatus />
     </template>
   </PanelHost>

@@ -20,7 +20,13 @@ const emit = defineEmits(['connection-dropped'])
 // One thing is selected at a time (no Shift box or Ctrl multi-select): the
 // Manage panel shows that node.
 const graph = inject(FLOW_GRAPH)
-const { onConnect, onConnectStart, onConnectEnd } = graph.flow
+const { onConnect, onConnectStart, onConnectEnd, onNodeDoubleClick } = graph.flow
+
+// Double-clicking a subnet opens it.
+onNodeDoubleClick(({ node }) => {
+  const error = graph.openSubnet(node.id)
+  if (error) graph.log(error, 'error')
+})
 
 let from = null // the pin a wire is being dragged from
 let connected = false

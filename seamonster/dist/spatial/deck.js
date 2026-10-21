@@ -1,13 +1,13 @@
-import { a as e, i as t, n, o as r, r as i } from "../geo-C3UIA9ug.js";
-import { computed as a, createCommentVNode as o, createElementBlock as s, createElementVNode as c, onBeforeUnmount as l, onMounted as u, openBlock as d, ref as f, toDisplayString as p, watch as m } from "vue";
-import { Deck as h, WebMercatorViewport as g } from "@deck.gl/core";
-import { BitmapLayer as _, GeoJsonLayer as v } from "@deck.gl/layers";
-import { TileLayer as y } from "@deck.gl/geo-layers";
+import { a as e, i as t, n, o as r, r as i, s as a } from "../geo-D29OdxI_.js";
+import { computed as o, createCommentVNode as s, createElementBlock as c, createElementVNode as l, onBeforeUnmount as u, onMounted as d, openBlock as f, ref as p, toDisplayString as m, watch as h } from "vue";
+import { Deck as g, WebMercatorViewport as _ } from "@deck.gl/core";
+import { BitmapLayer as v, GeoJsonLayer as y } from "@deck.gl/layers";
+import { TileLayer as b } from "@deck.gl/geo-layers";
 //#region widgets/spatial/components/DeckMap.vue
-var b = {
+var x = {
 	key: 0,
 	class: "wsp-attribution"
-}, x = {
+}, S = {
 	__name: "DeckMap",
 	props: {
 		layers: {
@@ -33,6 +33,14 @@ var b = {
 		autoFit: {
 			type: Boolean,
 			default: !0
+		},
+		selected: {
+			type: Array,
+			default: () => []
+		},
+		selectedStyle: {
+			type: Object,
+			default: () => n
 		}
 	},
 	emits: [
@@ -40,10 +48,10 @@ var b = {
 		"ready",
 		"feature-click"
 	],
-	setup(x, { expose: S, emit: C }) {
-		let w = x, T = C, E = f(null), D = f(null), O = null, k = !1, A = r(() => w.layers, (e, t) => T("error", e, t));
+	setup(n, { expose: S, emit: C }) {
+		let w = n, T = C, E = p(null), D = p(null), O = null, k = !1, A = a(() => w.layers, (e, t) => T("error", e, t));
 		function j() {
-			return new y({
+			return new b({
 				id: "wsp-basemap",
 				data: w.basemap.url,
 				minZoom: 0,
@@ -51,7 +59,7 @@ var b = {
 				tileSize: 256,
 				renderSubLayers: (e) => {
 					let { boundingBox: t } = e.tile;
-					return new _(e, {
+					return new v(e, {
 						data: null,
 						image: e.data,
 						bounds: [
@@ -65,20 +73,26 @@ var b = {
 			});
 		}
 		function M() {
-			return A.value.map(({ layer: n, data: r }) => {
-				let i = e(n.style);
-				return new v({
+			let t = r(w.selectedStyle);
+			return A.value.map(({ layer: n, data: i }) => {
+				let a = r(n.style), o = w.selected.filter((e) => e.layer === n.id), s = (e) => o.some((t) => t.feature === null || t.feature === void 0 || t.feature === e.id), c = (e, t) => o.length ? (n) => s(n) ? t : e : e;
+				return new y({
 					id: `wsp-${n.id}`,
-					data: r,
+					data: i,
 					pickable: !0,
 					stroked: !0,
 					filled: !0,
-					getFillColor: t(i.fillColor, i.fillOpacity),
-					getLineColor: t(i.color, i.opacity),
-					getLineWidth: i.weight,
+					getFillColor: c(e(a.fillColor, a.fillOpacity), e(t.fillColor, t.fillOpacity)),
+					getLineColor: c(e(a.color, a.opacity), e(t.color, t.opacity)),
+					getLineWidth: c(a.weight, t.weight),
 					lineWidthUnits: "pixels",
-					getPointRadius: i.radius,
+					getPointRadius: a.radius,
 					pointRadiusUnits: "pixels",
+					updateTriggers: {
+						getFillColor: JSON.stringify(o),
+						getLineColor: JSON.stringify(o),
+						getLineWidth: JSON.stringify(o)
+					},
 					onClick: (e) => T("feature-click", {
 						layer: n,
 						feature: e.object
@@ -86,12 +100,12 @@ var b = {
 				});
 			});
 		}
-		let N = a(() => [j(), ...M()]);
+		let N = o(() => [j(), ...M()]);
 		function P() {
-			let e = n(A.value.map((e) => i(e.data))), t = E.value?.clientWidth, r = E.value?.clientHeight;
-			if (!O || !e || !t || !r) return;
-			let { longitude: a, latitude: o, zoom: s } = new g({
-				width: t,
+			let e = i(A.value.map((e) => t(e.data))), n = E.value?.clientWidth, r = E.value?.clientHeight;
+			if (!O || !e || !n || !r) return;
+			let { longitude: a, latitude: o, zoom: s } = new _({
+				width: n,
 				height: r
 			}).fitBounds(e, { padding: 24 });
 			O.setProps({ initialViewState: {
@@ -100,8 +114,8 @@ var b = {
 				zoom: s
 			} }), k = !0;
 		}
-		return u(() => {
-			O = new h({
+		return d(() => {
+			O = new g({
 				canvas: D.value,
 				initialViewState: {
 					longitude: w.center[0],
@@ -111,23 +125,23 @@ var b = {
 				controller: !0,
 				layers: N.value
 			}), w.autoFit && P(), T("ready", O);
-		}), m(N, (e) => {
+		}), h(N, (e) => {
 			O?.setProps({ layers: e }), w.autoFit && !k && P();
-		}), l(() => {
+		}), u(() => {
 			O?.finalize(), O = null;
 		}), S({
 			fit: P,
 			getDeck: () => O
-		}), (e, t) => (d(), s("div", {
+		}), (e, t) => (f(), c("div", {
 			ref_key: "container",
 			ref: E,
 			class: "wsp-map"
-		}, [c("canvas", {
+		}, [l("canvas", {
 			ref_key: "canvas",
 			ref: D,
 			class: "wsp-canvas"
-		}, null, 512), x.basemap.attribution ? (d(), s("div", b, p(x.basemap.attribution), 1)) : o("", !0)], 512));
+		}, null, 512), n.basemap.attribution ? (f(), c("div", x, m(n.basemap.attribution), 1)) : s("", !0)], 512));
 	}
 };
 //#endregion
-export { x as DeckMap };
+export { S as DeckMap };

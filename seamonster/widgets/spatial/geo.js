@@ -84,6 +84,14 @@ export const DEFAULT_STYLE = {
   radius: 5, // point radius in pixels
 }
 
+// How a renderer highlights selected features, unless it's told otherwise.
+export const SELECTED_STYLE = {
+  color: '#ffd400',
+  weight: 4,
+  opacity: 1,
+  fillOpacity: 0.35,
+}
+
 export function resolveStyle(style) {
   const merged = { ...DEFAULT_STYLE, ...(style ?? {}) }
   return { ...merged, fillColor: merged.fillColor ?? merged.color }

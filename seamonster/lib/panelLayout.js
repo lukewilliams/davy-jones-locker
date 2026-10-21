@@ -36,11 +36,12 @@ function validRect(r) {
  * any PanelHost's.
  *
  * Linked panels share the window: left panels sit side by side from the left
- * edge (below the title bar), right panels full height on the right, and the
- * bottom panel fills the width between them. The last left panels can be
- * marked `aboveBottom`: while the bottom panel is open they stop short of it,
- * and it runs underneath them. Each panel resizes on one axis only, from the
- * edge facing the canvas. They only make room for other linked panels.
+ * edge (below the title bar), right panels side by side from the right edge,
+ * and the bottom panel fills the width between them. The last panels on
+ * either side can be marked `aboveBottom`: while the bottom panel is open they
+ * stop short of it, and it runs underneath them. Each panel resizes on one
+ * axis only, from the edge facing the canvas. They only make room for other
+ * linked panels.
  *
  * Unlinked panels ignore their neighbours and can overlap; clicking one brings
  * it to the front. They move by dragging the title and resize from any edge or
@@ -84,7 +85,15 @@ export function createPanelLayout({ storageKey = DEFAULT_STORAGE_KEY, autoHideRa
   const linkedOpen = (dock, include = null) =>
     panels.filter((p) => p.dock === dock && !isContent(p) && inLinkedLayout(p, include))
 
+  // Panels register in the order they're in the host's template. Names must
+  // be unique; a hotkey stays with the first panel to register it.
   function register({ name, title, dock, sizing = 'fill', defaultSize, minWidth, minHeight, collapsed, hotkey, aboveBottom }) {
+    if (find(name)) console.warn(`There are two panels called "${name}": give each panel a name of its own.`)
+    const clash = hotkey && panels.find((p) => p.hotkey?.toLowerCase() === hotkey.toLowerCase())
+    if (clash) {
+      console.warn(`The ${title} panel's hotkey ${hotkey} is the ${clash.title} panel's already, which keeps it.`)
+      hotkey = null
+    }
     panels.push({
       name, title, dock, sizing, defaultSize, minWidth, minHeight, collapsed, hotkey, aboveBottom,
       linked: true,
@@ -123,20 +132,27 @@ export function createPanelLayout({ storageKey = DEFAULT_STORAGE_KEY, autoHideRa
     return clamp(p.linkedFrac === null ? p.defaultSize : p.linkedFrac * w, p.minWidth, w)
   }
 
-  // Linked open left panels: `full` height ones, then `above`, the trailing run
-  // marked aboveBottom, which stop above the bottom panel while it's open.
-  function leftColumns(include = null) {
-    const lefts = linkedOpen('left', include)
-    let i = lefts.length
-    if (linkedOpen('bottom', include).length) while (i > 0 && lefts[i - 1].aboveBottom) i--
-    return { full: lefts.slice(0, i), above: lefts.slice(i) }
+  // Linked open panels on one side, from its edge inwards: `full` height ones,
+  // then `above`, the trailing run marked aboveBottom, which stop above the
+  // bottom panel while it's open.
+  function sideColumns(dock, include = null) {
+    const side = linkedOpen(dock, include)
+    let i = side.length
+    if (linkedOpen('bottom', include).length) while (i > 0 && side[i - 1].aboveBottom) i--
+    return { full: side.slice(0, i), above: side.slice(i) }
   }
+
+  // The panels above the bottom one, on both sides.
+  const abovePanels = (include = null) => [...sideColumns('left', include).above, ...sideColumns('right', include).above]
+
+  // Where a linked side panel's top is: left ones start below the title.
+  const topOf = (p) => (p.dock === 'left' ? frame.leftTop : frame.gap)
 
   // Tallest a linked bottom panel can be: the window's inner height, less room
   // for any panels above it at their minimum height.
   function bottomMax(above) {
     if (!above.length) return inner().h
-    const room = frame.height - 2 * frame.gap - frame.leftTop - Math.max(...above.map((p) => p.minHeight))
+    const room = Math.min(...above.map((p) => frame.height - 2 * frame.gap - topOf(p) - p.minHeight))
     return Math.max(0, room)
   }
 
@@ -186,34 +202,43 @@ export function createPanelLayout({ storageKey = DEFAULT_STORAGE_KEY, autoHideRa
     const out = {}
     if (!frame.width) return out
     const { width: W, height: H, gap: g, leftTop } = frame
-    const { full, above } = leftColumns(include)
+    const lefts = sideColumns('left', include)
+    const rights = sideColumns('right', include)
+    const above = [...lefts.above, ...rights.above]
     const bottoms = linkedOpen('bottom', include)
     const bottomTop = H - g - Math.max(0, ...bottoms.map((p) => bottomHeight(p, above)))
 
     let left = g // next free x after the linked left panels
-    for (const p of full) {
+    for (const p of lefts.full) {
       const width = linkedSize(p)
       out[p.name] = { left, top: leftTop, width, height: H - g - leftTop }
       left += width + g
     }
     const bottomLeft = left // the bottom panel runs under the `above` panels
-    for (const p of above) {
+    for (const p of lefts.above) {
       const width = linkedSize(p)
       out[p.name] = { left, top: leftTop, width, height: Math.max(0, bottomTop - g - leftTop) }
       left += width + g
     }
 
     let right = W - g // next free x before the linked right panels
-    for (const p of linkedOpen('right', include)) {
+    for (const p of rights.full) {
       const width = linkedSize(p)
       right -= width
       out[p.name] = { left: right, top: g, width, height: H - 2 * g }
       right -= g
     }
+    const bottomRight = right
+    for (const p of rights.above) {
+      const width = linkedSize(p)
+      right -= width
+      out[p.name] = { left: right, top: g, width, height: Math.max(0, bottomTop - 2 * g) }
+      right -= g
+    }
 
     for (const p of bottoms) {
       const height = bottomHeight(p, above)
-      out[p.name] = { left: bottomLeft, top: H - g - height, width: Math.max(0, right - bottomLeft), height }
+      out[p.name] = { left: bottomLeft, top: H - g - height, width: Math.max(0, bottomRight - bottomLeft), height }
     }
 
     for (const p of panels) {
@@ -232,12 +257,12 @@ export function createPanelLayout({ storageKey = DEFAULT_STORAGE_KEY, autoHideRa
 
   // Width the linked row needs (side panels at their widths, the bottom panel at
   // its minimum, gaps between), optionally leaving one panel out. The bottom
-  // panel shares a column with the panels above it, as wide as the wider of the
-  // two; leaving out one of those panels leaves the bottom's minimum out too,
-  // since a wider panel only widens the bottom panel under it.
+  // panel shares a column with the panels above it (on both sides), as wide as
+  // the wider of the two; leaving out one of those panels leaves the bottom's
+  // minimum out too, since a wider panel only widens the bottom panel under it.
   function rowNeed(skip) {
-    const { full, above } = leftColumns()
-    const sides = [...full, ...linkedOpen('right')].filter((p) => p !== skip)
+    const sides = [...sideColumns('left').full, ...sideColumns('right').full].filter((p) => p !== skip)
+    const above = abovePanels()
     const group = above.filter((p) => p !== skip)
     const bottom = linkedOpen('bottom')
     const sum = (list) => list.reduce((s, p) => s + linkedSize(p), 0)
@@ -289,7 +314,7 @@ export function createPanelLayout({ storageKey = DEFAULT_STORAGE_KEY, autoHideRa
         return
       }
       if (p.dock === 'bottom') {
-        const max = Math.max(p.minHeight, bottomMax(leftColumns().above))
+        const max = Math.max(p.minHeight, bottomMax(abovePanels()))
         p.linkedFrac = clamp(start.height - dy, p.minHeight, max) / ah
       } else {
         const { width: others, items } = rowNeed(p)

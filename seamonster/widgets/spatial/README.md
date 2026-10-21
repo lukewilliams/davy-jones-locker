@@ -45,7 +45,8 @@ deck.gl is the same component contract:
 import { DeckMap } from 'seamonster/spatial/deck'
 ```
 
-The map fills its container, so give the container a size.
+The map fills its container, so give the container a size. `LeafletMap`
+follows its container when it resizes (in a panel, say).
 
 ### Props
 
@@ -56,6 +57,8 @@ The map fills its container, so give the container a size.
 | `zoom` | `2` | initial zoom |
 | `basemap` | OpenStreetMap | `{ url, attribution, maxZoom }` |
 | `autoFit` | `true` | fit the view to the layers the first time they load |
+| `selected` | `[]` | features to highlight: `[{ layer, feature }]`, a layer's `id` and a feature's GeoJSON `id` (null or left out: every feature in the layer). Changing it restyles them without drawing the layers again; Leaflet pans to one out of view |
+| `selectedStyle` | `SELECTED_STYLE` | how highlighted features are drawn (yellow, 4px) |
 
 `center` is `[lng, lat]`, GeoJSON order — **not** Leaflet's `[lat, lng]`. One
 convention has to serve both renderers; `LeafletMap` flips it internally. This is
@@ -186,6 +189,51 @@ The deck.gl renderer draws its basemap with `TileLayer` + `BitmapLayer` rather
 than pairing with MapLibre — one library, one context, no second stylesheet. If
 you later need vector basemaps or tilted 3D basemaps, that is the point to bring
 in MapLibre and `@deck.gl/mapbox` instead.
+
+## The Map panel
+
+`MapPanel` (from `seamonster/spatial/leaflet`) is a panel for the flowgraph
+editor's `panels` slot (SEAMONSTER's README, "Panels"): a `LeafletMap` of the
+selected node's geometry, and of the nodes pinned to it. It's here rather
+than in the editor's entry so the editor doesn't pull in Leaflet; import
+`leaflet/dist/leaflet.css` with it.
+
+```vue
+<template #panels>
+  <EditorPanels />
+  <MapPanel dock="right" aboveBottom />
+</template>
+```
+
+- **What it draws:** each geometry column of the node's output tables (every
+  slot and sheet), transformed to longitude and latitude (EPSG:4326) for
+  Leaflet, null geometries skipped. A column with no CRS isn't drawn: the
+  panel says "CRS unknown", as it does when PROJ can't transform one. A table
+  shaped like `fromRows`'s (a `layer_id` column, and `data` or `url`) is
+  drawn as layers instead, a layer per row in the row's own `style`.
+- **Pin** keeps the selected node on the map while others are selected;
+  pinned nodes are listed in the panel's bar (click one to select it, × to
+  unpin), each in a colour of its own, and the selected node is drawn blue
+  on top. Pins are kept on the nodes, so they're saved with the graph.
+- **Clicking a feature** picks its row in Data, selecting its node and
+  turning Data to the row's page; picking a row in Data highlights its
+  features (yellow) and pans to them if they're out of view. A layers
+  table's layer stands for its row.
+- **The view** fits the layers the first time there are any, and after that
+  only when **Fit** is pressed. It's kept while the panel is collapsed, not
+  with the graph.
+- **Notes** under the bar say what isn't drawn and why: no geometry, a
+  failure, a node not run yet, more rows than are drawn.
+
+Props: `basemap` (as `LeafletMap`'s; OpenStreetMap by default, and its
+attribution is always shown) and `featureLimit` (10,000: rows drawn per
+geometry column). Everything else goes to its `FlowPanel`, whose defaults
+are `name="map"`, `title="Map"`, `dock="right"`, `hotkey="P"`, 360px wide,
+collapsed. Two Map panels need names of their own.
+
+It reads each output table as its node runs (the editor's output readers:
+the tables are gone by the next run), so a node is drawn from its last run.
+Its limits are in SEAMONSTER's README, "Limits of files".
 
 ## Distribution
 

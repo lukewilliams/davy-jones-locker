@@ -4,6 +4,7 @@ import { spatialWarnings } from './spatialChecks.js'
 import { checkNode, isKnownKind, kindInfo, NODE_KINDS, referenceName, slotsOf, slotsThrough, toIdentifier, uniqueId, unwiredPins, withDefaults } from './nodeKinds.js'
 import { copyTo, literal, loadExcel, quote } from './sqlText.js'
 import { xlsxSheetNames } from './xlsx.js'
+import { boundaryPins, graphAt, MAX_DEPTH, SUBNET, subnetGraph } from './subnets.js'
 import { unzip } from './zip.js'
 
 // Rows per page of a node's output in the Data panel.
@@ -121,6 +122,9 @@ function walk(value, visit) {
  *   serverTables(query)   the tables a query reads that no input supplies
  *   spatialWarnings(query)   warnings about a query's spatial SQL: measuring
  *                     in degrees, a dropped datum shift (spatialChecks.js)
+ *   runSubnet(), boundInput   for subnets (subnets.js): a Subnet node runs
+ *                     its graph with runSubnet(); an Input node inside puts
+ *                     out `boundInput`, what's wired into its subnet's pin
  *
  * `run` returns (or resolves to) what it made, any of:
  *
@@ -147,7 +151,8 @@ function walk(value, visit) {
  *                                                a script's non-table result
  *   { error }
  * and a script's printed lines as `output` (text) alongside it, or on its own
- * when it returns no table; Python adds its top-level `variables`.
+ * when it returns no table; Python adds its top-level `variables`. With
+ * output readers (readOutput), each `data` has `extras` beside it.
  */
 export function createGraphRunner(sql) {
   let queue = Promise.resolve()
@@ -160,46 +165,125 @@ export function createGraphRunner(sql) {
   }
 
   // Run `targetIds` (and everything upstream) of a saved-form graph
-  // (graphDocument.js). `paged` ({ id, page, table?, slot? }) picks the page
-  // of one target's output (of one of its tables, in one of its slots); the rest show their first page. `getFile(key)` returns
-  // stored bytes (a DataIngest node's tables). `server` is the server engine:
-  // { state ('connected', 'unavailable' or 'checking'), query?, runPython? }.
-  // Resolves to { [nodeId]: result } for every node that ran; rejects if the
-  // engine can't run at all.
-  const run = (doc, targetIds, { paged = null, getFile, server = { state: 'unavailable' } }) =>
-    queued(async () => (await runNow(doc, targetIds, paged, { getFile, server })).results)
+  // (graphDocument.js). A target inside a subnet is its path
+  // (subnet1/sqlnode1; see subnets.js), and runs what's upstream of it at
+  // every level. `paged` ({ id (a path), page, table?, slot? }) picks the
+  // page of one target's output (of one of its tables, in one of its slots);
+  // the rest show their first page. `getFile(key)` returns stored bytes (a
+  // DataIngest node's tables). `server` is the server engine: { state
+  // ('connected', 'unavailable' or 'checking'), query?, runPython? }.
+  // `readers` (a Map of name to function) read each output table while it's
+  // there: see readOutput. Resolves to { [path]: result } for every node that
+  // ran, inside subnets too; rejects if the engine can't run at all.
+  const run = (doc, targetIds, { paged = null, getFile, server = { state: 'unavailable' }, readers = null }) =>
+    queued(async () => (await runNow(doc, targetIds, paged, { getFile, server, readers })).results)
 
   // Resolves to { results, outputs }: the results, and the tables each node
-  // that ran left in OUTPUTS (until the next run).
-  async function runNow(doc, targetIds, paged, { getFile, server }) {
+  // that ran left in OUTPUTS (until the next run), by path.
+  async function runNow(doc, targetIds, paged, { getFile, server, readers = null }) {
     if (!sql) throw new Error("No SQL engine is connected, so nodes can't run.")
-    const nodes = new Map(doc.nodes.map((n) => [n.id, n]))
-    const { order, inputs } = upstreamOrder(doc, targetIds)
     await sql.query(`DROP SCHEMA IF EXISTS ${OUTPUTS} CASCADE`)
     await sql.query(`CREATE SCHEMA ${OUTPUTS}`)
-
-    // Per node that ran: { table } or { tables: [{ name, label, table }] }.
-    const outputs = new Map()
-    const context = { outputs, getFile, server }
     const results = {}
+    // Per node that ran, by path: { table } or { tables: [{ name, label, table }] }.
+    const outputs = new Map()
+    const context = { doc, paged, results, outputs, getFile, server, readers, prefix: '', depth: 0, bindings: null }
+    await runGraph(doc, targetIds, context)
+    return { results, outputs }
+  }
+
+  // Run `targets` of one graph: the document's, or a subnet's (its nodes'
+  // paths start with `context.prefix`, and `context.bindings` has what its
+  // Input nodes put out). A target can be a path into one of its subnets.
+  // Resolves to this level's outputs, by node ID.
+  async function runGraph(graph, targets, context) {
+    const { prefix, results, paged } = context
+    const nodes = new Map(graph.nodes.map((n) => [n.id, n]))
+    const own = []
+    const inside = new Map() // subnet ID -> paths in it that were asked for
+    for (const target of targets) {
+      const [id, ...rest] = target.split('/')
+      if (!nodes.has(id)) continue
+      if (rest.length && nodes.get(id).kind === SUBNET) inside.set(id, [...(inside.get(id) ?? []), rest.join('/')])
+      else if (!rest.length) own.push(id)
+    }
+    const { order, inputs } = upstreamOrder(graph, [...own, ...inside.keys()])
+    // A subnet that's there only for what's inside it runs just that, and
+    // has no result of its own; everything else runs whole.
+    const feeding = new Set(order.flatMap((id) => (inputs.get(id) ?? []).map((w) => w.source)))
+    const whole = new Set(order.filter((id) => !inside.has(id) || own.includes(id) || feeding.has(id)))
+
+    const outputs = new Map()
+    const level = { ...context, levelOutputs: outputs }
     for (const id of order) {
+      const key = prefix + id
       const wires = inputs.get(id) ?? []
-      const failed = wires.map((w) => w.source).find((source) => results[source].error)
+      const failed = wires.map((w) => w.source).find((source) => results[prefix + source]?.error)
       if (failed) {
-        results[id] = { error: `Upstream node ${failed} failed.` }
+        if (whole.has(id)) results[key] = { error: `Upstream node ${failed} failed.` }
         continue
       }
       const node = nodes.get(id)
-      const page = paged?.id === id ? paged : { page: 0 }
       try {
         const exposed = inputsOf(wires, nodes, outputs)
+        if (!whole.has(id)) {
+          await runSubnet(node, exposed, inside.get(id), level, false)
+          continue
+        }
         await exposeInputs(exposed)
-        results[id] = await runNode(node, exposed, page, context)
+        const page = paged?.id === key ? paged : { page: 0 }
+        results[key] = await runNode(node, exposed, page, { ...level, inner: inside.get(id) ?? null })
       } catch (e) {
-        results[id] = { error: message(e) }
+        results[key] = { error: message(e) }
       }
     }
-    return { results, outputs }
+    return outputs
+  }
+
+  // A subnet node's graph, run with what's wired into its pins bound to its
+  // Input nodes (the first slot each wire carries): every Output's upstream
+  // when `whole` (the subnet runs as a node), and `innerTargets` (paths in
+  // it). Resolves to what a kind's run returns: its first Output's table (or
+  // tables), and the others as slots; or an error naming where it started
+  // (Screening › classify: ...).
+  async function runSubnet(node, inputs, innerTargets, context, whole) {
+    const path = context.prefix + node.id
+    const name = node.label || node.id
+    if (context.depth >= MAX_DEPTH) {
+      return { error: `Subnets here are nested more than ${MAX_DEPTH} deep: does one contain itself?` }
+    }
+    const graph = subnetGraph(node, context.doc.subnets)
+    if (!graph) return { error: `This subnet uses "${node.subnetRef}" from the graph's shared subnets, which the graph doesn't have.` }
+    const pins = boundaryPins(graph)
+    const bindings = new Map()
+    for (const pin of pins.inputs) {
+      const input = inputs.find((i) => i.pin === pin)
+      bindings.set(pin, !input ? { error: `Nothing is wired into ${name}'s ${pin} input.` }
+        : input.tables ? { tables: input.tables } : { table: input.table })
+    }
+    const targets = [...(whole ? pins.outputs : []), ...(innerTargets ?? [])]
+    const inner = { ...context, prefix: `${path}/`, depth: context.depth + 1, bindings }
+    const outputs = await runGraph(graph, targets, inner)
+    if (!whole) return null
+
+    const failed = pins.outputs.some((o) => context.results[`${path}/${o}`]?.error)
+    if (failed) {
+      const nodes = new Map(graph.nodes.map((n) => [n.id, n]))
+      const [id, origin] = Object.entries(context.results).find(([key, r]) =>
+        key.startsWith(`${path}/`) && !key.slice(path.length + 1).includes('/') && r.error && !/^Upstream node .+ failed\.$/.test(r.error),
+      ) ?? []
+      if (!origin) return { error: `${name} failed.` }
+      const child = nodes.get(id.slice(path.length + 1))
+      // A subnet's own error starts with its name already.
+      return { error: child?.kind === SUBNET ? `${name} › ${origin.error}` : `${name} › ${child?.label || child?.id}: ${origin.error}` }
+    }
+    const made = { slots: {} }
+    pins.outputs.forEach((o, i) => {
+      const out = outputs.get(o)
+      if (i === 0) Object.assign(made, out.tables ? { tables: out.tables } : { table: out.table })
+      else made.slots[o] = out.tables ? { tables: out.tables } : out.table
+    })
+    return made
   }
 
   // ---- For the AI assistant ----
@@ -209,23 +293,28 @@ export function createGraphRunner(sql) {
   // label, tables: [{ name (one of several), columns: [{ name, type }],
   // rowCount, sample (its first `sampleRows` rows, long values cut short) }] },
   // or { name, kind, label, error } for one that failed. `getFile` and
-  // `server` are as for run.
-  const describeInputs = (doc, nodeId, { getFile, server = { state: 'unavailable' }, sampleRows = 0 }) =>
-    queued(() => describeNow(doc, nodeId, { getFile, server, sampleRows }))
+  // `server` are as for run. `nodePath` is the node's path (its ID, or
+  // subnet1/sqlnode1 inside a subnet).
+  const describeInputs = (doc, nodePath, { getFile, server = { state: 'unavailable' }, sampleRows = 0 }) =>
+    queued(() => describeNow(doc, nodePath, { getFile, server, sampleRows }))
 
-  async function describeNow(doc, nodeId, { getFile, server, sampleRows }) {
-    const sourceIds = [...new Set(doc.edges.filter((e) => e.target === nodeId).map((e) => e.source))]
+  async function describeNow(doc, nodePath, { getFile, server, sampleRows }) {
+    const segments = nodePath.split('/')
+    const nodeId = segments.pop()
+    const prefix = segments.map((s) => `${s}/`).join('')
+    const graph = graphAt(doc, segments) ?? { nodes: [], edges: [] }
+    const sourceIds = [...new Set(graph.edges.filter((e) => e.target === nodeId).map((e) => e.source))]
     if (!sourceIds.length) return []
     if (!sql) throw new Error("No SQL engine is connected, so the inputs can't be read.")
-    const nodes = new Map(doc.nodes.map((n) => [n.id, n]))
-    const { results, outputs } = await runNow(doc, sourceIds, null, { getFile, server })
+    const nodes = new Map(graph.nodes.map((n) => [n.id, n]))
+    const { results, outputs } = await runNow(doc, sourceIds.map((id) => prefix + id), null, { getFile, server })
     const described = []
     for (const id of sourceIds) {
       const source = nodes.get(id)
       const about = { name: referenceName(id, source), kind: kindInfo(source.kind).label, label: source.label ?? '' }
-      const output = outputs.get(id)
+      const output = outputs.get(prefix + id)
       if (!output) {
-        described.push({ ...about, error: results[id]?.error ?? "It didn't run." })
+        described.push({ ...about, error: results[prefix + id]?.error ?? "It didn't run." })
         continue
       }
       const tables = output.table ? [{ name: null, table: output.table }] : output.tables
@@ -285,6 +374,8 @@ export function createGraphRunner(sql) {
     ]
     if (errors.length) return { error: errors.join(' ') }
     const ctx = runContext(withDefaults(node), inputs, context)
+    // A subnet runs its graph; what was asked for inside it runs too.
+    ctx.runSubnet = () => runSubnet(node, inputs, context.inner, context, true)
     const { table, tables, slots: filled, error, ...made } = (await run(ctx)) ?? {}
     if (error) return { error, ...(made.output !== undefined ? { output: made.output } : {}) }
 
@@ -302,16 +393,24 @@ export function createGraphRunner(sql) {
         : value?.tables ? { tables: value.tables }
         : await empty(ctx.slotTable(slot.name))
     }
-    context.outputs.set(node.id, { ...first, ...(others.length ? { slots } : {}) })
+    const output = { ...first, ...(others.length ? { slots } : {}) }
+    context.levelOutputs.set(node.id, output)
+    context.outputs.set(context.prefix + node.id, output)
     if (made.export) return made
 
     // Previews for the Data panel: the page asked for, of the table and slot
     // asked for, and the first page of the rest.
     const show = async (output, slot) => {
       const at = (name) => (page.slot ?? null) === slot && (page.table ?? null) === name ? page.page ?? 0 : 0
-      if (output.table) return { data: await preview(output.table, at(null)) }
+      const read = async (table) => {
+        const extras = await readOutput(table, context.readers)
+        return extras ? { extras } : {}
+      }
+      if (output.table) return { data: await preview(output.table, at(null)), ...(await read(output.table)) }
       const shown = []
-      for (const t of output.tables) shown.push({ name: t.name, label: t.label, data: await preview(t.table, at(t.name)) })
+      for (const t of output.tables) {
+        shown.push({ name: t.name, label: t.label, data: await preview(t.table, at(t.name)), ...(await read(t.table)) })
+      }
       return { tables: shown }
     }
     const result = { ...made, ...(tables || table ? await show(first, null) : {}) }
@@ -377,8 +476,11 @@ export function createGraphRunner(sql) {
     return made
   }
 
-  // What a kind's run is given: see the top of this file.
-  function runContext(node, inputs, { getFile, server }) {
+  // What a kind's run is given: see the top of this file. Output tables are
+  // named by the node's path, so levels don't collide. `boundInput` is what an
+  // Input node puts out (see runSubnet).
+  function runContext(node, inputs, { getFile, server, prefix, bindings }) {
+    const base = prefix + node.id
     return {
       id: node.id,
       node,
@@ -386,8 +488,9 @@ export function createGraphRunner(sql) {
       sql,
       server,
       getFile,
-      table: (name) => `${OUTPUTS}.${quote(name ? `${node.id}/${name}` : node.id)}`,
-      slotTable: (slot, name) => `${OUTPUTS}.${quote(name ? `${node.id}#${slot}/${name}` : `${node.id}#${slot}`)}`,
+      boundInput: bindings?.get(node.id),
+      table: (name) => `${OUTPUTS}.${quote(name ? `${base}/${name}` : base)}`,
+      slotTable: (slot, name) => `${OUTPUTS}.${quote(name ? `${base}#${slot}/${name}` : `${base}#${slot}`)}`,
       rows: inputValue,
       parquet: () => parquetInputs(inputs),
       parquetOf,
@@ -611,6 +714,26 @@ export function createGraphRunner(sql) {
       return { columns, rows, ...paged }
     }
     return { columns, ...(await geometryPage(table, described, window)), ...paged }
+  }
+
+  // What the host's readers (flowGraph's addOutputReader) make of an output
+  // table, by reader name: whatever each returns (null for nothing), or
+  // { error } for one that throws. Each gets { table, columns, query }: the
+  // table's name to put in SQL, its columns ({ name, type, crs }, crs as for
+  // a geometry column's type in geoExport.js, undefined for other columns),
+  // and `query(sql)` on the SQL engine. Null without readers.
+  async function readOutput(table, readers) {
+    if (!readers?.size) return null
+    const columns = (await sql.query(`DESCRIBE ${table}`)).rows.map(([name, type]) => ({ name, type: String(type), crs: crsOfType(type) }))
+    const extras = {}
+    for (const [name, read] of readers) {
+      try {
+        extras[name] = (await read({ table, columns, query: (text) => sql.query(text) })) ?? null
+      } catch (e) {
+        extras[name] = { error: message(e) }
+      }
+    }
+    return extras
   }
 
   // A page with geometry: { rows, wkt, geometry }. Measuring needs the

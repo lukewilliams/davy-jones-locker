@@ -7,6 +7,8 @@ import { runJavaScript } from './jsSandbox.js'
 import { defineNodeKind, toIdentifier } from './kindRegistry.js'
 import { copyTo, fromHex, loadExcel, quote } from './sqlText.js'
 import { repairXlsx } from './xlsx.js'
+import { boundaryPins, newSubnetGraph, SUBNET, SUBNET_INPUT, SUBNET_OUTPUT, subnetFace } from './subnets.js'
+import SubnetFields from '../components/SubnetFields.vue'
 
 // SEAMONSTER's own node kinds, defined as an app defines its own (see
 // kindRegistry.js), in the order the Library and menus list them. Those that
@@ -318,4 +320,55 @@ async function sqliteTable(sql, { name, table }) {
 
 // ---- Custom ----
 
-defineNodeKind({ kind: 'subnet', label: 'Subnet', category: 'custom', idPrefix: 'subnet', runs: true })
+// A Subnet node: a graph of its own, run as one node (see subnets.js). Its
+// pins are its graph's Input and Output nodes, kept on the node as
+// `subnetPins` (and its first slot's name as `outputSuffix`) by the graph
+// store whenever the graph changes. The runner runs its graph (ctx.runSubnet).
+defineNodeKind({
+  kind: SUBNET,
+  label: 'Subnet',
+  description: 'A graph of its own, run as one node: what\'s wired into it comes out of its Input nodes, and its Output nodes are its outputs. Double-click it to open it.',
+  category: 'custom',
+  idPrefix: 'subnet',
+  mainInput: false,
+  inputPins: (data) => (data.subnetPins?.inputs ?? []).map((name) => ({ name, label: name })),
+  slots: (data) => (data.subnetPins?.outputs ?? []).slice(1).map((name) => ({ name, pin: true })),
+  fields: [{ type: 'custom', component: SubnetFields }],
+  create: () => {
+    const graph = newSubnetGraph()
+    return { subnet: graph, ...subnetFace(boundaryPins(graph)) }
+  },
+  run: (ctx) => ctx.runSubnet(),
+})
+
+// ---- Inside a subnet (the Library and menus offer these only there) ----
+
+// One of its subnet's inputs: the subnet node's pin of this node's ID, and
+// what's wired into that pin comes out here (its first slot, as one wire
+// from a main pin carries).
+defineNodeKind({
+  kind: SUBNET_INPUT,
+  label: 'Input',
+  description: "One of its subnet's inputs: the subnet node has an input pin named by this node's ID, and what's wired into that pin comes out here.",
+  category: 'boundary',
+  idPrefix: 'input',
+  mainInput: false,
+  run: (ctx) => ctx.boundInput ?? { error: 'Input nodes work only inside a subnet: open a subnet (double-click it) and add them there.' },
+})
+
+// One of its subnet's outputs, named by this node's ID: what's wired into it
+// (one wire) comes out of the subnet. The topmost Output is its first slot.
+defineNodeKind({
+  kind: SUBNET_OUTPUT,
+  label: 'Output',
+  description: "One of its subnet's outputs, named by this node's ID: what's wired into it comes out of the subnet. The topmost Output is the subnet's first output; others get pins of their own.",
+  category: 'boundary',
+  idPrefix: 'output',
+  mainInput: 'one',
+  mainOutput: false,
+  run: (ctx) => {
+    const input = ctx.inputs[0]
+    if (!input) return { error: 'Wire a node into this Output.' }
+    return input.tables ? { tables: input.tables } : { table: input.table }
+  },
+})

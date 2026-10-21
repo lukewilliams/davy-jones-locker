@@ -113,6 +113,38 @@
   letter-spacing: 0.025em;
 }
 
+/* Inside a subnet: the levels open, after the title (Graph › Screening),
+ * each but the last a button back up to it. */
+.flow-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 13px;
+  color: var(--flow-text-muted);
+}
+
+.flow-breadcrumb-level {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.flow-breadcrumb-level:hover {
+  color: var(--flow-text);
+}
+
+.flow-breadcrumb-level[aria-current='page'] {
+  color: var(--flow-text);
+  cursor: default;
+}
+
+.flow-breadcrumb-shared {
+  color: var(--flow-text-faint);
+}
+
 /* Brand gradient text (--flow-brand-*) */
 .flow-brand-text {
   background-image: linear-gradient(90deg, var(--flow-brand-from), var(--flow-brand-to), var(--flow-brand-from));
@@ -514,6 +546,17 @@ button.flow-panel-title {
 .flow-field-hint  { color: var(--flow-text-faint); }
 .flow-field-error { color: var(--flow-error); }
 
+/* A field and its button on one line (a subnet's Share). */
+.flow-field-row {
+  display: flex;
+  gap: 0.375rem;
+}
+
+.flow-field-row .flow-field-input {
+  flex: 1;
+  min-width: 0;
+}
+
 /* A field rule's warning: the node still runs. */
 .flow-field-warning {
   margin: 0;
@@ -855,6 +898,11 @@ button.flow-panel-title {
 
 .flow-table td[title] {
   cursor: help;
+}
+
+/* The picked row (a click, or a feature clicked on the Map panel). */
+.flow-table tbody tr.is-picked td {
+  background-color: var(--flow-accent-soft);
 }
 
 .flow-pager {

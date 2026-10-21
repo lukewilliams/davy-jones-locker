@@ -44,8 +44,31 @@ with `import 'seamonster/style.css'` once in the app's entry. Props:
 | `storage-name` | `'davy-jones-locker'` | the open graph is kept in localStorage under `<name>:open-graph`, and DataIngest files in the IndexedDB database `<name>` |
 | `extension-repository` | `'duckdb-extensions'` | where the app serves DuckDB's extensions, relative to the page or absolute (below) |
 
-Anything else (`title`, `theme`) passes through to SEAMONSTER's `FlowgraphEditor`.
-The parts are exported too, for an app that wires `FlowgraphEditor` itself:
+Anything else (`title`, `theme`) passes through to SEAMONSTER's `FlowgraphEditor`,
+and so does its `panels` slot, for the app's own panels (SEAMONSTER's README,
+"Panels"):
+
+```vue
+<script setup>
+import { DavyJonesLocker } from 'davy-jones-locker'
+import { EditorPanels } from 'seamonster'
+import { MapPanel } from 'seamonster/spatial/leaflet'
+import 'leaflet/dist/leaflet.css'
+</script>
+
+<template>
+  <DavyJonesLocker title="MYAPP" engine-url="/engines/engine-myapp">
+    <template #panels>
+      <EditorPanels />
+      <MapPanel dock="right" aboveBottom />
+    </template>
+  </DavyJonesLocker>
+</template>
+```
+
+The Map panel needs `leaflet` installed in the app (an optional peer of
+SEAMONSTER's). The parts are exported too, for an app that wires
+`FlowgraphEditor` itself:
 
 - `createEngineClient({ url, name })`: the engine as FlowgraphEditor's `server`
   prop ([engineClient.js](app/engineClient.js)), checking its `/health` every

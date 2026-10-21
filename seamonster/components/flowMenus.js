@@ -12,6 +12,7 @@ export const OPEN_MENU = Symbol('flow-open-menu')
 
 // A node; context is its ID.
 export const NODE_MENU = [
+  { label: 'Open subnet', command: 'node.open', shortcut: 'Enter' },
   { label: 'Reset', command: 'node.reset' },
   { type: 'separator' },
   { label: 'Delete node', command: 'node.delete', shortcut: 'Del' },
@@ -22,9 +23,13 @@ export const WIRE_MENU = [{ label: 'Delete wire', command: 'wire.delete', shortc
 
 // Categories (with colour badges, from .flow-node--<category>), each a submenu
 // of its node kinds; picking one runs `command` with { kind }. Built when the
-// menu opens, so kinds defined since (see kindRegistry.js) are in it.
-const nodeKindItems = (command) => () =>
-  NODE_CATEGORIES.map((category) => ({
+// menu opens, so kinds defined since (see kindRegistry.js) are in it. With
+// `graph`, inside a subnet, its Input and Output nodes come first.
+const nodeKindItems = (command, graph = null) => () =>
+  [
+    ...(graph?.levels.value.length > 1 ? [{ id: 'boundary', label: 'Subnet' }] : []),
+    ...NODE_CATEGORIES,
+  ].map((category) => ({
     type: 'submenu',
     label: category.label,
     badge: { class: `flow-node--${category.id}` },
@@ -41,6 +46,14 @@ export const CONNECTION_MENU = nodeKindItems('node.addConnected')
 
 export function createFlowMenus(layout, graph) {
   const commands = {
+    // A subnet's graph takes the canvas.
+    'node.open': {
+      hidden: (id) => graph.flow.findNode(id)?.data.kind !== 'subnet',
+      run: (id) => {
+        const error = graph.openSubnet(id)
+        if (error) graph.log(error, 'error')
+      },
+    },
     // At the point the canvas was right-clicked.
     'node.add': (_, { kind }) => graph.addNode(kind),
     'node.addConnected': ({ point, from }, { kind }) => graph.addConnectedNode(kind, point, from),
@@ -54,9 +67,9 @@ export function createFlowMenus(layout, graph) {
   }
 
   const canvasMenu = [
-    { type: 'submenu', label: 'Nodes', items: nodeKindItems('node.add') },
+    { type: 'submenu', label: 'Nodes', items: nodeKindItems('node.add', graph) },
     panelsSubmenu(layout),
   ]
 
-  return { commands, canvasMenu }
+  return { commands, canvasMenu, connectionMenu: nodeKindItems('node.addConnected', graph) }
 }

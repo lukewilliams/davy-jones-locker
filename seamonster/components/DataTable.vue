@@ -3,13 +3,16 @@
 // buttons ask for the page before or after (`turn` with -1 or 1). A table
 // with geometry also has `geometry` (by column: null, or { crs, types, z,
 // empty, invalid }) and `wkt` (by row and column), from the runner's preview.
-import { computed } from 'vue'
+// `picked` is a row of the page to highlight (kept in view), -1 for none; a
+// click on a row asks for it (`pick` with its index in the page).
+import { computed, nextTick, ref, watch } from 'vue'
 
 const props = defineProps({
   data: { type: Object, required: true },
   busy: Boolean, // the pager waits while the node runs
+  picked: { type: Number, default: -1 },
 })
-const emit = defineEmits(['turn'])
+const emit = defineEmits(['turn', 'pick'])
 
 const canTurn = (delta) => !props.busy && (delta < 0 ? props.data.page > 0 : props.data.hasMore)
 const turn = (delta) => canTurn(delta) && emit('turn', delta)
@@ -23,6 +26,19 @@ function geometryHeader(info) {
   return { label: `${types} · ${info.crs ?? 'CRS unknown'}`, problems: problems.join(' · ') }
 }
 const geometryHeaders = computed(() => (props.data.geometry ?? []).map((info) => (info ? geometryHeader(info) : null)))
+
+// The picked row scrolls into view when it's picked elsewhere (a map), or
+// arrives with a new page.
+const body = ref(null)
+watch(
+  () => [props.picked, props.data],
+  async () => {
+    if (props.picked < 0) return
+    await nextTick()
+    body.value?.children[props.picked]?.scrollIntoView({ block: 'nearest' })
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -44,8 +60,14 @@ const geometryHeaders = computed(() => (props.data.geometry ?? []).map((info) =>
             </th>
           </tr>
         </thead>
-        <tbody>
-          <tr v-for="(row, r) in data.rows" :key="r">
+        <tbody ref="body">
+          <tr
+            v-for="(row, r) in data.rows"
+            :key="r"
+            :class="{ 'is-picked': r === picked }"
+            :aria-selected="r === picked"
+            @click="emit('pick', r)"
+          >
             <td v-for="(value, i) in row" :key="i" :title="data.wkt?.[r]?.[i] ?? undefined">{{ cell(value) }}</td>
           </tr>
         </tbody>
