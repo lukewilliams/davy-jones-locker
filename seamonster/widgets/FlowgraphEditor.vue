@@ -1,5 +1,5 @@
 <script setup>
-import { computed, provide, ref } from 'vue'
+import { computed, nextTick, provide, ref } from 'vue'
 import { vMenu } from './menu/index.js'
 import PanelHost from './panels/PanelHost.vue'
 import FlowCanvas from '../components/FlowCanvas.vue'
@@ -8,6 +8,8 @@ import ServerStatus from '../components/ServerStatus.vue'
 import { createPanelLayout } from '../lib/panelLayout.js'
 import { createFlowGraph, FLOW_GRAPH } from '../lib/flowGraph.js'
 import { useGraphStorage } from '../lib/graphStorage.js'
+import { isTyping } from '../lib/keyboard.js'
+import { TERMINAL_COMMANDS } from '../lib/commands.js'
 import { hasTheme, resolveTheme } from '../lib/themes.js'
 import { createFlowMenus, OPEN_MENU } from '../components/flowMenus.js'
 
@@ -34,6 +36,9 @@ const props = defineProps({
   // Open panels leave the rails (unless an edge's panels can cover each
   // other). False keeps a rail for every panel, open or collapsed.
   autoHideRails: { type: Boolean, default: true },
+  // The Terminal's commands: a registry from createCommandRegistry (see
+  // lib/commands.js). Without it the Terminal has no command field.
+  terminalCommands: { type: Object, default: null },
 })
 
 const theme = computed(() => resolveTheme(props.theme))
@@ -45,7 +50,15 @@ const layout = createPanelLayout({ autoHideRails: () => props.autoHideRails })
 
 const graph = createFlowGraph({ sql: props.sql, files: props.storage, server: props.server })
 provide(FLOW_GRAPH, graph)
+provide(TERMINAL_COMMANDS, props.terminalCommands)
 useGraphStorage(graph, props.storage)
+
+// ~ (or `): the Terminal opens, if it's collapsed, with its command field focused.
+async function focusCommandField() {
+  if (layout.find('terminal')?.collapsed) layout.setCollapsed('terminal', false)
+  await nextTick()
+  host.value?.el?.querySelector('.flow-command-input')?.focus()
+}
 
 const { commands, canvasMenu, connectionMenu } = createFlowMenus(layout, graph)
 
@@ -56,7 +69,13 @@ const inMenu = (e) => !!e.target.closest('.wm-content')
 
 // PanelHost handles the panels' keys; these are the graph's (Delete, Ctrl+Z).
 function onKeydown(e) {
-  if (!inMenu(e)) graph.onKeydown(e)
+  if (inMenu(e)) return
+  if ((e.key === '`' || e.key === '~') && props.terminalCommands && !isTyping(e) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault()
+    focusCommandField()
+    return
+  }
+  graph.onKeydown(e)
 }
 
 // A wire dragged from a pin was dropped on empty canvas: offer a node to create there.

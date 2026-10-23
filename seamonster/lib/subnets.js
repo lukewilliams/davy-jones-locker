@@ -20,6 +20,16 @@ export const SUBNET = 'subnet'
 export const SUBNET_INPUT = 'subnet-input'
 export const SUBNET_OUTPUT = 'subnet-output'
 
+// A Loop (roadmap 10d) is a subnet run once per row: everything here holds
+// for it too. Its Input node `item` puts out each run's row, and it has a
+// `status` output of its own (see graphRunner's runLoop).
+export const LOOP = 'loop'
+export const LOOP_ITEM = 'item'
+export const LOOP_STATUS = 'status'
+
+// Kinds whose node holds a graph of its own.
+export const isGraphKind = (kind) => kind === SUBNET || kind === LOOP
+
 // How deep subnets may nest when they run: deeper means one contains itself.
 export const MAX_DEPTH = 8
 
@@ -55,14 +65,15 @@ export function subnetFace(pins) {
 export const samePins = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
 
 // A new subnet's graph: one Input wired to one Output, so it's one in, one
-// out, like any node, and passes its input through until it's changed.
-export function newSubnetGraph() {
+// out, like any node, and passes its input through until it's changed. A
+// new Loop's Input is `item`, so each run passes its row through.
+export function newSubnetGraph(input = 'input1') {
   return {
     nodes: [
-      { id: 'input1', kind: SUBNET_INPUT, position: { x: 0, y: 0 } },
+      { id: input, kind: SUBNET_INPUT, position: { x: 0, y: 0 } },
       { id: 'output1', kind: SUBNET_OUTPUT, position: { x: 360, y: 0 } },
     ],
-    edges: [{ id: 'input1.source-0-output1.target-0', source: 'input1', sourceHandle: 'source-0', target: 'output1', targetHandle: 'target-0' }],
+    edges: [{ id: `${input}.source-0-output1.target-0`, source: input, sourceHandle: 'source-0', target: 'output1', targetHandle: 'target-0' }],
   }
 }
 
@@ -72,7 +83,7 @@ export function graphAt(doc, segments) {
   let graph = doc
   for (const id of segments) {
     const node = graph?.nodes?.find((n) => n.id === id)
-    if (node?.kind !== SUBNET) return null
+    if (!isGraphKind(node?.kind)) return null
     graph = subnetGraph(node, doc.subnets)
   }
   return graph ?? null
@@ -101,7 +112,7 @@ export function subnetNodes(doc) {
   const visit = (graph, prefix, depth) => {
     if (!graph || depth > MAX_DEPTH) return
     for (const node of graph.nodes ?? []) {
-      if (node.kind !== SUBNET) continue
+      if (!isGraphKind(node.kind)) continue
       const path = `${prefix}${node.id}`
       found.push({ path, node })
       visit(subnetGraph(node, doc.subnets), `${path}/`, depth + 1)
@@ -118,7 +129,7 @@ export function mapGraphs(graph, fn) {
   if (!graph) return graph
   let changed = false
   const nodes = (graph.nodes ?? []).map((node) => {
-    if (node.kind !== SUBNET || !node.subnet) return node
+    if (!isGraphKind(node.kind) || !node.subnet) return node
     const subnet = mapGraphs(node.subnet, fn)
     if (subnet === node.subnet) return node
     changed = true

@@ -15,9 +15,19 @@ import { reactive } from 'vue'
 //   runNode    runs a node of one of the app's own kinds, in the engine's node
 //              worker (SEAMONSTER calls it for a kind whose `where` is 'server'
 //              and that has no `run` of its own)
+//   runLoop    runs a Loop node on the server, as a job, following its
+//              progress (SEAMONSTER calls it for a Loop with nodes inside that
+//              run only on the server)
 //   nodes      the app's own node kinds and categories, as GET /nodes has them
 //              (serverKinds.js defines them in the browser)
 //   assist     the AI assistant: a node's code from a request in plain words
+//   commands, runCommand   the Terminal's b. commands: listed (GET /commands)
+//              and run (POST /commands); see commands.js
+//   disconnect, connect    stop talking to the engine (status unavailable,
+//              status.disconnected true, every request refused) and start
+//              again: f.Security.DisconnectBackend and EnableBackend
+//   hideAssistant(hidden)  the assistant left out of status in this browser
+//              (f.Assistant.Disable), whatever the engine says
 //
 // Inputs are [{ name, bytes }]: Parquet, named by reference name (or
 // name.table). The engine's README has the API.
@@ -29,6 +39,9 @@ import { reactive } from 'vue'
 // `nodes` the names of the app's own node kinds (status.nodes follows it).
 // `local` is true for an engine in local development (IS_LOCAL): it signs no
 // one in, and the app's node kinds can reach the network (status.local).
+
+// How often a running job is asked how it's going.
+const JOB_POLL_MS = 1000
 
 const CONNECTED_INTERVAL_MS = 5000
 const UNAVAILABLE_INTERVAL_MS = 15000
@@ -43,8 +56,15 @@ function form(fields, inputs) {
   return body
 }
 
-export function createEngineClient({ url, name = 'The engine' }) {
+// `disconnected` and `assistantHidden` start it so (kept by the app shell).
+export function createEngineClient({ url, name = 'The engine', disconnected = false, assistantHidden = false }) {
   const base = url.replace(/\/+$/, '')
+  let off = disconnected
+  let hideAssistant = assistantHidden
+  let lastAssistant = null // what the engine last said, hidden or not
+  const refuse = () => {
+    throw new Error(`${name} is disconnected in this browser (f.Security.DisconnectBackend): f.Security.EnableBackend connects it again.`)
+  }
 
   // The engine's errors are JSON { error }; anything else says what came back.
   async function failure(response) {
@@ -56,6 +76,7 @@ export function createEngineClient({ url, name = 'The engine' }) {
   }
 
   async function send(path, init) {
+    if (off) refuse()
     let response
     try {
       response = await fetch(`${base}${path}`, { method: 'POST', ...init })
@@ -68,8 +89,22 @@ export function createEngineClient({ url, name = 'The engine' }) {
 
   const post = (path, fields, inputs) => send(path, { body: form(fields, inputs) })
 
+  async function get(path) {
+    if (off) refuse()
+    let response
+    try {
+      response = await fetch(`${base}${path}`, { cache: 'no-store' })
+    } catch {
+      throw new Error(`${name} couldn't be reached.`)
+    }
+    if (!response.ok) throw await failure(response)
+    return response
+  }
+
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
   const client = {
-    status: reactive({ state: 'checking', address: null, local: false, assistant: null, nodes: [] }),
+    status: reactive({ state: off ? 'unavailable' : 'checking', address: null, local: false, assistant: null, nodes: [], disconnected: off }),
 
     async query({ sql, inputs = [] }) {
       const response = await post('/query', { sql }, inputs)
@@ -120,6 +155,62 @@ export function createEngineClient({ url, name = 'The engine' }) {
       return { ...result, outputs }
     },
 
+    // { node (its data, its graph inline), path, subnets (the document's
+    // shared ones), inputs: [{ pin, bytes }] (Parquet, `item` for items),
+    // progress({ done, total, failed }) }. Starts a job (POST /jobs), asks how
+    // it's going every second, and resolves to { warnings, error?, outputs:
+    // [{ slot, bytes }] } (slot null for its first output).
+    async runLoop({ node, path, subnets = {}, inputs = [], progress = () => {} }) {
+      const body = new FormData()
+      body.append('job', JSON.stringify({ node, path, subnets }))
+      for (const { pin, bytes } of inputs) body.append('input', new Blob([bytes], { type: PARQUET }), pin)
+      let job = await (await send('/jobs', { body })).json()
+      while (job.status === 'running') {
+        await sleep(JOB_POLL_MS)
+        job = await (await get(`/jobs/${job.id}`)).json()
+        if (job.progress?.total) progress(job.progress)
+      }
+      if (job.status === 'failed') return { error: job.error }
+      const parts = await (await get(`/jobs/${job.id}/result`)).formData()
+      const result = JSON.parse(parts.get('result'))
+      const tables = new Map()
+      for (const file of parts.getAll('table')) tables.set(file.name, new Uint8Array(await file.arrayBuffer()))
+      const outputs = (result.outputs ?? []).map((o) => ({ slot: o.slot, bytes: tables.get(o.part) }))
+      return { warnings: result.warnings ?? [], outputs }
+    },
+
+    // The engine's b. commands: [{ name, kind, description, type, secret,
+    // set, values?, value? }] (see the engine's commands.py).
+    async commands() {
+      return (await (await get('/commands')).json()).commands ?? []
+    },
+
+    // Run one: `value` sets a setting (pass it only to set one), none runs an
+    // action. Resolves to what it printed.
+    async runCommand(command, ...value) {
+      const body = value.length ? { name: command, value: value[0] } : { name: command }
+      const response = await send('/commands', { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+      return (await response.json()).message
+    },
+
+    disconnect() {
+      off = true
+      clearTimeout(timer)
+      Object.assign(client.status, { state: 'unavailable', address: null, assistant: null, disconnected: true })
+    },
+
+    connect() {
+      if (!off) return
+      off = false
+      Object.assign(client.status, { state: 'checking', disconnected: false })
+      check()
+    },
+
+    hideAssistant(hidden) {
+      hideAssistant = hidden
+      client.status.assistant = hidden ? null : lastAssistant
+    },
+
     // { categories: [...], kinds: [...] }: definitions SEAMONSTER's
     // defineNodeCategory and defineNodeKind take.
     async nodes() {
@@ -144,18 +235,23 @@ export function createEngineClient({ url, name = 'The engine' }) {
   async function check() {
     const { status } = client
     clearTimeout(timer)
+    if (off) return
     try {
       const response = await fetch(`${base}/health`, { cache: 'no-store', signal: AbortSignal.timeout(TIMEOUT_MS) })
       const json = response.ok && response.headers.get('content-type')?.includes('json')
       const body = json ? await response.json() : null
       if (body?.status !== 'ok') throw new Error('not the engine')
+      if (off) return // disconnected while it checked
       status.state = 'connected'
       status.address = body.host && body.port ? `${body.host}:${body.port}` : location.host
       status.local = body.local === true
       // Replaced only when they change, not on every check.
-      if (JSON.stringify(body.assistant ?? null) !== JSON.stringify(status.assistant)) status.assistant = body.assistant ?? null
+      lastAssistant = body.assistant ?? null
+      const assistant = hideAssistant ? null : lastAssistant
+      if (JSON.stringify(assistant) !== JSON.stringify(status.assistant)) status.assistant = assistant
       if (JSON.stringify(body.nodes ?? []) !== JSON.stringify(status.nodes)) status.nodes = body.nodes ?? []
     } catch {
+      if (off) return // disconnected while it checked
       status.state = 'unavailable'
       status.address = null
       status.assistant = null

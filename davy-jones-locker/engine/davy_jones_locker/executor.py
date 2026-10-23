@@ -26,19 +26,26 @@ as it is, with what's wired into the subnet's pins put out by its Input nodes
 (subnet-output) its outputs, the topmost first. Nodes inside are known by path
 (subnet1/sqlnode1): results are keyed so, and output tables named so. Errors
 name the node inside where they started (Screening › classify: ...).
+
+A Loop is a subnet run once per row of what's wired into its `item` pin (see
+run_loop): each run in a DuckDB of its own, so several can run at once.
 """
 
 import base64
 import io
 import json
 import re
+import threading
+import time
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import pyarrow as pa
 import pyarrow.csv as pacsv
 
-from . import database, noderunner, runner, sql
-from .sql import QueryError
+from . import database, noderunner, runner, settings, sql
+from .sql import QueryError, literal
 
 
 class NodeError(Exception):
@@ -65,6 +72,10 @@ WRITERS = {
 
 
 SUBNET, SUBNET_INPUT, SUBNET_OUTPUT = "subnet", "subnet-input", "subnet-output"
+# A Loop's Input node putting out each run's row, and its output saying how
+# each run went.
+LOOP, LOOP_ITEM, LOOP_STATUS = "loop", "item", "status"
+GRAPH_KINDS = {SUBNET, LOOP}
 
 # How deep subnets may nest: deeper means one contains itself.
 MAX_DEPTH = 8
@@ -75,13 +86,17 @@ UPSTREAM_FAILED = re.compile(r"^Upstream node .+ failed\.$")
 @dataclass
 class Level:
     """One graph being run: the document's, or a subnet's (its nodes' paths
-    start with `prefix`; `bindings` has what its Input nodes put out, by ID)."""
+    start with `prefix`; `bindings` has what its Input nodes put out, by ID).
+    `progress(path, { done, total, failed })` follows Loops' runs, and
+    `cancelled()` says to stop (before the next node, or the next run)."""
 
     doc: dict
     results: dict
     prefix: str = ""
     depth: int = 0
     bindings: dict | None = None
+    progress: Callable[[str, dict], None] | None = None
+    cancelled: Callable[[], bool] | None = None
 
 
 def subnet_graph(node: dict, doc: dict) -> dict | None:
@@ -108,7 +123,7 @@ def boundary_pins(graph: dict) -> dict[str, list[str]]:
 def reference_name(node: dict, doc: dict | None = None) -> str:
     """How downstream code reads a node's first slot. A subnet's is named by
     its topmost Output node."""
-    if node.get("kind") == SUBNET and doc is not None:
+    if node.get("kind") in GRAPH_KINDS and doc is not None:
         graph = subnet_graph(node, doc)
         first = boundary_pins(graph)["outputs"][:1] if graph else []
         return f"{node['id']}_{first[0] if first else 'data'}"
@@ -139,11 +154,15 @@ def upstream_order(doc: dict, targets: list[str]) -> tuple[list[str], dict[str, 
     return order, inputs
 
 
-def execute(doc: dict, targets: list[str] | None = None) -> dict[str, dict]:
+def execute(
+    doc: dict, targets: list[str] | None = None, progress: Callable[[str, dict], None] | None = None,
+    cancelled: Callable[[], bool] | None = None,
+) -> dict[str, dict]:
     """Run `targets` (by default every node with Auto Run on) and everything
     upstream. A target inside a subnet is its path (subnet1/sqlnode1).
-    Returns { path: { status, error? | rowCount, output?, value?, export? } }
-    for every node that ran, inside subnets too."""
+    Returns { path: { status, error? | rowCount, output?, value?, export?,
+    warnings? } } for every node that ran, inside subnets too. `progress`
+    and `cancelled` are as for Level."""
     nodes = {n["id"]: n for n in doc.get("nodes", []) if isinstance(n, dict) and "id" in n}
     if targets is None:
         targets = [node_id for node_id, n in nodes.items() if n.get("autoRun") is not False]
@@ -152,7 +171,7 @@ def execute(doc: dict, targets: list[str] | None = None) -> dict[str, dict]:
         raise ValueError(f"No such node: {', '.join(missing)}.")
     results: dict[str, dict] = {}
     with sql.Session() as session:
-        run_graph(session, doc, targets, Level(doc=doc, results=results))
+        run_graph(session, doc, targets, Level(doc=doc, results=results, progress=progress, cancelled=cancelled))
     return results
 
 
@@ -169,7 +188,7 @@ def run_graph(session: sql.Session, graph: dict, targets: list[str], level: Leve
         first, _, rest = target.partition("/")
         if first not in nodes:
             continue
-        if rest and nodes[first].get("kind") == SUBNET:
+        if rest and nodes[first].get("kind") in GRAPH_KINDS:
             inside.setdefault(first, []).append(rest)
         elif not rest:
             own.append(first)
@@ -181,6 +200,8 @@ def run_graph(session: sql.Session, graph: dict, targets: list[str], level: Leve
 
     outputs: dict[str, dict[str | None, str | dict[str, str]]] = {}
     for node_id in order:
+        if level.cancelled and level.cancelled():
+            break
         key = level.prefix + node_id
         wires = inputs.get(node_id, [])
         failed = next((w["source"] for w in wires if level.results.get(level.prefix + w["source"], {}).get("status") == "failed"), None)
@@ -191,7 +212,10 @@ def run_graph(session: sql.Session, graph: dict, targets: list[str], level: Leve
         try:
             given = wired(wires, nodes, outputs, level.doc)
             if node_id not in whole:
-                run_subnet(session, nodes[node_id], given, outputs, level, inside[node_id], whole=False)
+                if nodes[node_id].get("kind") == LOOP:
+                    run_loop_inside(session, nodes[node_id], given, level, inside[node_id])
+                else:
+                    run_subnet(session, nodes[node_id], given, outputs, level, inside[node_id], whole=False)
                 continue
             result = run_node(session, nodes[node_id], given, outputs, level, inside.get(node_id))
             level.results[key] = {"status": "completed", **result}
@@ -231,16 +255,7 @@ def run_subnet(
         return None
 
     if any(level.results.get(f"{path}/{o}", {}).get("status") == "failed" for o in pins["outputs"]):
-        inner_nodes = {n["id"]: n for n in graph.get("nodes", []) if isinstance(n, dict) and "id" in n}
-        for key, result in list(level.results.items()):
-            child = key.removeprefix(f"{path}/")
-            if child == key or "/" in child or result.get("status") != "failed" or UPSTREAM_FAILED.match(result.get("error", "")):
-                continue
-            child_node = inner_nodes.get(child, {})
-            if child_node.get("kind") == SUBNET:  # its error starts with its name already
-                raise NodeError(f"{name} › {result['error']}")
-            raise NodeError(f"{name} › {child_node.get('label') or child}: {result['error']}")
-        raise NodeError(f"{name} failed.")
+        raise NodeError(f"{name} › {failure(path, graph, level.results)}")
 
     made: dict[str | None, str | dict[str, str]] = {}
     for i, out in enumerate(pins["outputs"]):
@@ -253,16 +268,33 @@ def run_subnet(
     return {"rowCount": rows_of(session, made[None])}
 
 
+def failure(path: str, graph: dict, results: dict) -> str:
+    """Where a failed run of the graph at `path` started: the node inside
+    whose error didn't come from upstream, as "Classify: message" (a
+    subnet's own error starts with its name already)."""
+    inner_nodes = {n["id"]: n for n in graph.get("nodes", []) if isinstance(n, dict) and "id" in n}
+    for key, result in list(results.items()):
+        child = key.removeprefix(f"{path}/")
+        if child == key or "/" in child or result.get("status") != "failed" or UPSTREAM_FAILED.match(result.get("error", "")):
+            continue
+        child_node = inner_nodes.get(child, {})
+        if child_node.get("kind") in GRAPH_KINDS:
+            return result["error"]
+        return f"{child_node.get('label') or child}: {result['error']}"
+    return "it failed."
+
+
 def rows_of(session: sql.Session, output: str | dict[str, str]) -> int:
     return session.row_count(output) if isinstance(output, str) else sum(session.row_count(t) for t in output.values())
 
 
 def slot_names(node: dict, doc: dict | None = None) -> list[str]:
     """A node's slots beyond the first: its kind's, if it's one of the app's;
-    a subnet's Outputs after the topmost."""
-    if node.get("kind") == SUBNET and doc is not None:
+    a subnet's Outputs after the topmost (and a Loop's status)."""
+    if node.get("kind") in GRAPH_KINDS and doc is not None:
         graph = subnet_graph(node, doc)
-        return boundary_pins(graph)["outputs"][1:] if graph else []
+        names = boundary_pins(graph)["outputs"][1:] if graph else []
+        return [*names, LOOP_STATUS] if node["kind"] == LOOP else names
     kind = noderunner.KINDS.get(node.get("kind"))
     return kind.slot_names(node) if kind else []
 
@@ -305,6 +337,9 @@ def run_node(
 
     if kind == SUBNET:
         return run_subnet(session, node, inputs, outputs, level, inner_targets, whole=True)
+
+    if kind == LOOP:
+        return run_loop_node(session, node, inputs, outputs, level)
 
     if kind == SUBNET_INPUT:
         bound = (level.bindings or {}).get(node_id)
@@ -516,3 +551,233 @@ def write(fmt: str, table: pa.Table) -> bytes:
     else:
         sink.write(json.dumps(table.to_pylist(), default=str).encode())
     return sink.getvalue()
+
+
+# ---- Loops (roadmap 10d) ----
+
+
+def loop_graph(node: dict, doc: dict, name: str) -> tuple[dict, dict]:
+    """A Loop node's graph and pins, or why it can't run."""
+    graph = subnet_graph(node, doc)
+    if graph is None:
+        raise NodeError(f"This loop uses \"{node.get('subnetRef')}\" from the graph's shared subnets, which the graph doesn't have.")
+    pins = boundary_pins(graph)
+    if LOOP_ITEM not in pins["inputs"]:
+        raise NodeError(f"A loop needs an Input node called {LOOP_ITEM} inside: it puts out each run's row.")
+    if LOOP_STATUS in pins["outputs"]:
+        raise NodeError(
+            f"An Output inside is called {LOOP_STATUS}, which is the loop's own output saying how each run went. Rename it."
+        )
+    return graph, pins
+
+
+def run_loop(
+    node: dict, doc: dict, path: str, items: bytes, others: dict[str, bytes], depth: int = 0,
+    progress: Callable[[dict], None] | None = None, cancelled: Callable[[], bool] | None = None,
+) -> dict:
+    """A Loop node's graph run once per row of `items` (Parquet; up to its Most
+    runs, `loopMax`, 1000 by default), each run in a DuckDB of its own, as
+    many at once as `loopConcurrency` asks (up to LOOP_MAX_CONCURRENCY). In
+    each, the Input node `item` puts out that row, and the other Inputs
+    `others[pin]` (Parquet). Each Output's table is gathered across the runs
+    that completed, by column name, `_key` (the `loopKey` column's value, or
+    the row number) and `_iteration` (from 1) first; `status` has a row per
+    run (_key, _iteration, status: completed, failed or skipped, error,
+    duration_ms, rows: each Output's row count, as JSON). With `loopOnError`
+    'stop', the first failure stops it (runs not started are skipped) and
+    it fails; `cancelled()` skips the runs not started.
+
+    Returns { outputs: [(slot, Parquet)] (None: the first Output's, then the
+    others and status), warnings, failed, cancelled }."""
+    name = node.get("label") or node["id"]
+    if depth >= MAX_DEPTH:
+        raise NodeError(f"Subnets here are nested more than {MAX_DEPTH} deep: does one contain itself?")
+    graph, pins = loop_graph(node, doc, name)
+    missing = [p for p in pins["inputs"] if p != LOOP_ITEM and p not in others]
+    most = max(1, int(node.get("loopMax") or 1000))
+    concurrency = max(1, min(int(node.get("loopConcurrency") or 1), settings.LOOP_MAX_CONCURRENCY))
+    stop = node.get("loopOnError") == "stop"
+    key_column = (node.get("loopKey") or "").strip()
+
+    table = sql.from_parquet(items)
+    total = table.num_rows
+    runs = min(total, most)
+    if key_column:
+        if key_column not in table.column_names:
+            raise NodeError(f"Key column: {key_column} isn't a column of what's wired into items ({', '.join(table.column_names)}).")
+        keys = [None if v is None else str(v) for v in table.column(key_column).slice(0, runs).to_pylist()]
+    else:
+        keys = [str(i + 1) for i in range(runs)]
+
+    halt = threading.Event()
+    done = {"done": 0, "failed": 0}
+    lock = threading.Lock()
+
+    def one(i: int) -> dict:
+        key = keys[i]
+        if halt.is_set() or (cancelled and cancelled()):
+            return {"status": "skipped"}
+        started = time.monotonic()
+        error, parts, counts = None, {}, {}
+        try:
+            with sql.Session() as session:
+                bindings: dict = {}
+                item = session.output_table(f"{path}#{LOOP_ITEM}")
+                session.load(item, table.slice(i, 1))
+                bindings[LOOP_ITEM] = item
+                for pin in pins["inputs"]:
+                    if pin == LOOP_ITEM:
+                        continue
+                    if pin in others:
+                        bound = session.output_table(f"{path}#{pin}")
+                        session.load(bound, sql.from_parquet(others[pin]))
+                        bindings[pin] = bound
+                    else:
+                        bindings[pin] = NodeError(f"Nothing is wired into {name}'s {pin} input.")
+                results: dict = {}
+                inner = Level(doc=doc, results=results, prefix=f"{path}/", depth=depth + 1, bindings=bindings)
+                made = run_graph(session, graph, pins["outputs"], inner)
+                if any(results.get(f"{path}/{o}", {}).get("status") == "failed" for o in pins["outputs"]):
+                    error = failure(path, graph, results)
+                for o in [] if error else pins["outputs"]:
+                    out = made[o][None]
+                    if not isinstance(out, str):
+                        error = f"{o}: an Output in a loop takes one table, and this one has {len(out)}."
+                        break
+                    copy = session.output_table(f"{path}#{o}#{i}")
+                    key_sql = "NULL" if key is None else literal(key)
+                    session.con.execute(
+                        f"CREATE TABLE {copy} AS SELECT {key_sql}::VARCHAR AS _key, {i + 1} AS _iteration, "
+                        f"COLUMNS(c -> c NOT IN ('_key', '_iteration')) FROM {out}"
+                    )
+                    counts[o] = session.row_count(copy)
+                    parts[o] = session.parquet(copy)
+        except (NodeError, QueryError) as e:
+            error = str(e)
+        except Exception as e:  # anything unexpected fails the run, not the loop
+            error = f"{type(e).__name__}: {e}"
+        with lock:
+            done["done"] += 1
+            done["failed"] += 1 if error else 0
+            if progress:
+                progress({"done": done["done"], "total": runs, "failed": done["failed"]})
+        if error and stop:
+            halt.set()
+        ms = round((time.monotonic() - started) * 1000)
+        if error:
+            return {"status": "failed", "error": error, "ms": ms}
+        return {"status": "completed", "ms": ms, "rows": counts, "parts": parts}
+
+    if missing and runs:
+        raise NodeError(f"Nothing is wired into {name}'s {missing[0]} input.")
+    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+        ran = list(pool.map(one, range(runs)))
+
+    failed = [i for i, r in enumerate(ran) if r["status"] == "failed"]
+    if stop and failed:
+        i = failed[0]
+        raise NodeError(f"Run {i + 1} (_key {keys[i]}) failed, so the loop stopped: {ran[i]['error']}")
+
+    outputs: list[tuple[str | None, bytes]] = []
+    with sql.Session() as session:
+        for n, o in enumerate(pins["outputs"]):
+            target = gather(session, [r["parts"][o] for r in ran if r["status"] == "completed"], f"{path}#{o}", o)
+            outputs.append((None if n == 0 else o, session.parquet(target)))
+        if not pins["outputs"]:
+            outputs.append((None, session.parquet(gather(session, [], path, None))))
+    status = pa.table({
+        "_key": pa.array(keys, pa.string()),
+        "_iteration": pa.array(range(1, runs + 1), pa.int32()),
+        "status": pa.array([r["status"] for r in ran], pa.string()),
+        "error": pa.array([r.get("error") for r in ran], pa.string()),
+        "duration_ms": pa.array([r.get("ms") for r in ran], pa.int64()),
+        "rows": pa.array([json.dumps(r["rows"]) if "rows" in r else None for r in ran], pa.string()),
+    })
+    outputs.append((LOOP_STATUS, sql.to_parquet(status)))
+
+    warnings = []
+    if total > runs:
+        warnings.append(f"items has {total:,} rows: the loop ran the first {runs:,} (Most runs).")
+    if failed:
+        warnings.append(f"{len(failed)} of {runs} runs failed: {node['id']}_{LOOP_STATUS} says which, and why.")
+    skipped = sum(1 for r in ran if r["status"] == "skipped")
+    if skipped:
+        warnings.append(f"{skipped} of {runs} runs were cancelled before they started.")
+    return {"outputs": outputs, "warnings": warnings, "failed": len(failed), "cancelled": skipped}
+
+
+def gather(session: sql.Session, parts: list[bytes], name: str, output: str | None) -> str:
+    """Each run's copy of one Output (Parquet), gathered by column name, in
+    the runs' order, into the output table `name`, which it returns. No
+    parts: just _key and _iteration."""
+    target = session.output_table(name)
+    if not parts:
+        session.con.execute(f"CREATE TABLE {target} AS SELECT NULL::VARCHAR AS _key, NULL::INTEGER AS _iteration WHERE false")
+        return target
+    loaded = []
+    for n, data in enumerate(parts):
+        part = session.output_table(f"{name}#{n}")
+        session.load(part, sql.from_parquet(data))
+        loaded.append(part)
+    try:
+        union = " UNION ALL BY NAME ".join(f"SELECT * FROM {p}" for p in loaded)
+        session.con.execute(f"CREATE TABLE {target} AS SELECT * FROM ({union}) WHERE false")
+    except Exception as e:
+        raise NodeError(
+            f"The runs' {output} outputs don't fit together: each run's {output} needs the same columns, with the "
+            f"same types. {sql.scrub(str(e))}"
+        ) from e
+    for p in loaded:
+        session.con.execute(f"INSERT INTO {target} BY NAME SELECT * FROM {p}")
+        session.con.execute(f"DROP TABLE {p}")
+    return target
+
+
+def run_loop_node(session: sql.Session, node: dict, inputs: list[dict], outputs: dict, level: Level) -> dict:
+    """A Loop node in a graph run: what's wired into its pins sent to run_loop
+    as Parquet, and what it made loaded back as its tables."""
+    name = node.get("label") or node["id"]
+    path = level.prefix + node["id"]
+    sent: dict[str, bytes] = {}
+    for given in inputs:
+        if given["pin"] is None or given["pin"] in sent:
+            continue
+        if not isinstance(given["output"], str):
+            raise NodeError(f"What's wired into {given['pin']} has several tables, and a loop takes one per input: wire in one.")
+        sent[given["pin"]] = session.parquet(given["output"])
+    if LOOP_ITEM not in sent:
+        raise NodeError(f"Nothing is wired into {name}'s items input.")
+    items = sent.pop(LOOP_ITEM)
+    result = run_loop(
+        node, level.doc, path, items, sent, depth=level.depth,
+        progress=(lambda p: level.progress(path, p)) if level.progress else None, cancelled=level.cancelled,
+    )
+    made: dict[str | None, str] = {}
+    for slot, data in result["outputs"]:
+        target = session.output_table(path if slot is None else f"{path}#{slot}")
+        session.load(target, sql.from_parquet(data))
+        made[slot] = target
+    outputs[node["id"]] = made
+    return {"rowCount": session.row_count(made[None]), **({"warnings": result["warnings"]} if result["warnings"] else {})}
+
+
+def run_loop_inside(session: sql.Session, node: dict, inputs: list[dict], level: Level, inner_targets: list[str]) -> None:
+    """Paths inside a Loop asked for on their own: they run in its first run
+    (its first row), in this run's DuckDB, so they can be looked at."""
+    name = node.get("label") or node["id"]
+    path = level.prefix + node["id"]
+    graph, pins = loop_graph(node, level.doc, name)
+    bindings: dict = {}
+    for pin in pins["inputs"]:
+        given = next((i for i in inputs if i["pin"] == pin), None)
+        bindings[pin] = given["output"] if given else NodeError(f"Nothing is wired into {name}'s {pin} input.")
+    items = bindings[LOOP_ITEM]
+    if isinstance(items, str):
+        item = session.output_table(f"{path}#{LOOP_ITEM}")
+        session.con.execute(f"CREATE TABLE {item} AS SELECT * FROM {items} LIMIT 1")
+        bindings[LOOP_ITEM] = item
+    inner = Level(
+        doc=level.doc, results=level.results, prefix=f"{path}/", depth=level.depth + 1, bindings=bindings,
+        progress=level.progress, cancelled=level.cancelled,
+    )
+    run_graph(session, graph, inner_targets, inner)

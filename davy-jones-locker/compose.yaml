@@ -20,7 +20,7 @@
 # This builds the images from engine/. They're published too, for each
 # release (ghcr.io/lukewilliams/davy-jones-locker-engine, -runner and
 # -node-worker, tagged with the version): replace a `build:` with
-# `image: ghcr.io/lukewilliams/davy-jones-locker-runner:0.3.1`, say, and
+# `image: ghcr.io/lukewilliams/davy-jones-locker-runner:0.3.2`, say, and
 # build the app's own engine FROM the engine's.
 #
 # The node worker runs the app's own node kinds (engine/davy_jones_locker/nodes/):

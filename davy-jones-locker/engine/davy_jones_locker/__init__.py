@@ -3,6 +3,8 @@
     from davy_jones_locker import create_app
     app = create_app()                    # or with the app's own node kinds:
     app = create_app(nodes=[...], categories=[...])   # see nodes/
+    app = create_app(commands=[Command(...)])         # the Terminal's b. commands:
+                                                      # davy_jones_locker.commands
 
 The runner (sandbox/) and the node worker (nodeworker/) import this package
 too, without the engine's libraries, so nothing here imports them until

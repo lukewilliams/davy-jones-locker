@@ -70,3 +70,10 @@ RUN_TIMEOUT_SECONDS = _int("RUN_TIMEOUT_SECONDS", 60)
 QUERY_TIMEOUT_SECONDS = _int("QUERY_TIMEOUT_SECONDS", 60)
 QUERY_MEMORY_LIMIT = os.environ.get("QUERY_MEMORY_LIMIT") or "1GB"
 MAX_UPLOAD_MB = _int("MAX_UPLOAD_MB", 200)
+
+# Loops and jobs (roadmap 10d): the most runs of one Loop at once, whatever
+# its node asks for; the most jobs running at once (more are refused, 429);
+# and how long a finished job's result is kept for collecting.
+LOOP_MAX_CONCURRENCY = _int("LOOP_MAX_CONCURRENCY", 4)
+JOBS_AT_ONCE = _int("JOBS_AT_ONCE", 4)
+JOB_KEEP_SECONDS = _int("JOB_KEEP_SECONDS", 3600)

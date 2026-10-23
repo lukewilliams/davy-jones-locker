@@ -9,7 +9,7 @@ import {
 } from './nodeKinds.js'
 import { outputAt } from './results.js'
 import {
-  boundaryPins, downstreamIn, graphAt, isBoundary, MAX_DEPTH, mapGraphs, rewirePins, samePins, SUBNET, subnetFace,
+  boundaryPins, downstreamIn, graphAt, isBoundary, isGraphKind, MAX_DEPTH, mapGraphs, rewirePins, samePins, subnetFace,
   subnetGraph, subnetNodes,
 } from './subnets.js'
 
@@ -128,6 +128,8 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
     state: server?.status?.state ?? 'unavailable',
     address: server?.status?.address ?? null,
     local: server?.status?.local === true,
+    // Disconnected on purpose (the app shell's f.Security.DisconnectBackend).
+    disconnected: server?.status?.disconnected === true,
     assistant: (typeof server?.assist === 'function' && server?.status?.assistant) || null,
   }))
   let deletions = [] // undo stack of { nodes, edges }, the canvas level's
@@ -144,7 +146,8 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
   // Run state, results and logs by path; `run.status`, `run.results` and
   // `logs.nodes` are the canvas level's, by ID.
   const runFlags = reactive({ started: false, executing: false })
-  const runAll = reactive({ status: {}, results: {} })
+  // `progress` is a running Loop's: { done, total, failed }.
+  const runAll = reactive({ status: {}, results: {}, progress: {} })
   const logAll = reactive({})
   const logState = reactive({ app: [] })
   const run = {
@@ -154,6 +157,7 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
     set executing(value) { runFlags.executing = value },
     status: levelView(() => runAll.status),
     results: levelView(() => runAll.results),
+    progress: levelView(() => runAll.progress),
   }
   const logs = { nodes: levelView(() => logAll), get app() { return logState.app } }
 
@@ -245,6 +249,7 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
     Object.assign(runFlags, { started: false, executing: false })
     runAll.status = {}
     runAll.results = {}
+    runAll.progress = {}
     for (const path of Object.keys(logAll)) delete logAll[path]
     flow.setEdges([])
     flow.setNodes(nodes)
@@ -548,7 +553,7 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
   // Returns an error message, or null.
   function openSubnet(id) {
     const node = flow.findNode(id)
-    if (node?.data.kind !== SUBNET) return null
+    if (!isGraphKind(node?.data.kind)) return null
     const graph = subnetGraph(node.data, library)
     if (!graph) return `This subnet uses "${node.data.subnetRef}" from the graph's shared subnets, which the graph doesn't have.`
     if (stack.length >= MAX_DEPTH) return `Subnets open here only ${MAX_DEPTH} deep.`
@@ -638,7 +643,7 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
   const facePins = (which, pins, rename = {}) => (graph) => {
     let next = graph
     for (const node of graph.nodes ?? []) {
-      if (node.kind !== SUBNET || !which(node)) continue
+      if (!isGraphKind(node.kind) || !which(node)) continue
       if (!samePins(node.subnetPins, pins)) {
         next = { ...next, nodes: next.nodes.map((n) => (n.id === node.id ? { ...n, ...subnetFace(pins) } : n)) }
       }
@@ -826,8 +831,16 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
     for (const entry of entries) append(logAll[path].entries, entry)
   }
 
-  // An entry in the app's log: `type` is 'info' (default), 'error', 'warning' or 'note'.
-  const log = (text, type = 'info') => append(logState.app, { type, text })
+  // An entry in the app's log: `type` is 'info' (default), 'error', 'warning'
+  // or 'note' (and the Terminal's 'command' and 'result'). With `repeat`, it's
+  // added again rather than counted (a command, and what it printed).
+  function log(text, type = 'info', { repeat = false } = {}) {
+    if (repeat) logState.app.push({ id: ++entrySeq, type, text, count: 1 })
+    else append(logState.app, { type, text })
+  }
+
+  // The app's log emptied (f.Terminal.Clear).
+  const clearLog = () => logState.app.splice(0)
 
   // The server coming and going, in the app's log.
   watch(
@@ -843,6 +856,8 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
             'warning',
           )
         }
+      } else if (state === 'unavailable' && serverStatus.value.disconnected) {
+        log('Disconnected from the server in this browser: nothing is sent to it, and nodes that run there can\'t run.', 'note')
       } else if (state === 'unavailable') {
         log(
           previous === 'connected'
@@ -868,6 +883,7 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
 
   const serverForRuns = () => ({
     state: serverStatus.value.state, query: server?.query, runPython: server?.runPython, runNode: server?.runNode,
+    runLoop: server?.runLoop,
   })
 
   // Output readers by name: each `read({ table, columns, query })` runs on
@@ -909,7 +925,9 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
     const editsAtStart = new Map(edits)
     let results
     try {
-      results = await runner.run(snapshot.value, paths, { paged, getFile, server: serverForRuns(), readers })
+      results = await runner.run(snapshot.value, paths, {
+        paged, getFile, server: serverForRuns(), readers, progress: (path, p) => (runAll.progress[path] = p),
+      })
     } catch (e) {
       // The engine couldn't run at all (say, DuckDB failed to load).
       results = Object.fromEntries(paths.map((path) => [path, { error: message(e) }]))
@@ -930,6 +948,7 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
     // A target inside a subnet that ran only as far as what was asked for
     // inside it has no result of its own: it's no longer running.
     for (const path of paths) if (runAll.status[path] === 'running') delete runAll.status[path]
+    for (const path of Object.keys(runAll.progress)) if (path in results || paths.includes(path)) delete runAll.progress[path]
     return results
   }
 
@@ -1036,7 +1055,7 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
   function onKeydown(e) {
     if (isTyping(e)) return
     const mod = e.ctrlKey || e.metaKey
-    if (e.key === 'Enter' && !mod && !e.altKey && selectedNode.value?.data.kind === SUBNET) {
+    if (e.key === 'Enter' && !mod && !e.altKey && isGraphKind(selectedNode.value?.data.kind)) {
       e.preventDefault()
       const error = openSubnet(selectedNode.value.id)
       if (error) log(error, 'error')
@@ -1060,7 +1079,7 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
   }
 
   return {
-    flow, selectedNode, snapshot, run, logs, log, reading, server: serverStatus, dataView,
+    flow, selectedNode, snapshot, run, logs, log, clearLog, reading, server: serverStatus, dataView,
     levels, library, openSubnet, closeSubnet, shareSubnet, useSubnet,
     load, setContextPoint, addNode, addConnectedNode, connect, isValidConnection, select,
     renameNode, setLabel, setOutputName, updateData, setPanelData, chooseFile, setIngestFormat, storeFieldFile,

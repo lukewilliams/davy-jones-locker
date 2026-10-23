@@ -986,6 +986,144 @@ button.flow-panel-title {
   color: var(--flow-text-muted);
 }
 
+/* With a command field: the log above it. */
+.flow-terminal-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  height: 100%;
+}
+
+.flow-terminal-panel .flow-terminal {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+
+/* A command, right-aligned in blue, and what it printed under it. */
+.flow-terminal-command {
+  margin: 0.375rem 0 0;
+  padding: 0.25rem 0.375rem;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: right;
+  overflow-wrap: anywhere;
+  color: var(--flow-accent);
+}
+
+.flow-terminal-result {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--flow-text);
+}
+
+/* The command field: a combobox, its list opening above it in the menus'
+ * look (--wm-*: see PanelHost), focus staying in the field. */
+.flow-command {
+  position: relative;
+}
+
+.flow-command-box {
+  position: relative;
+}
+
+.flow-command-input,
+.flow-command-ghost {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid transparent;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.flow-command-input {
+  position: relative;
+  border-color: var(--flow-panel-border);
+  border-radius: 0.375rem;
+  background: rgb(0 0 0 / 0.35);
+  color: var(--flow-text);
+  outline: none;
+}
+
+.flow-command-input:focus {
+  border-color: var(--flow-accent);
+}
+
+.flow-command-input::placeholder {
+  color: var(--flow-text-faint);
+}
+
+/* Behind the field, the same text: what's typed, invisible, then the rest
+ * of the only match, faint. */
+.flow-command-ghost {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  white-space: pre;
+  color: var(--flow-text-faint);
+  pointer-events: none;
+}
+
+.flow-command-ghost + .flow-command-input {
+  background: transparent;
+}
+
+.flow-command-box::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 0.375rem;
+  background: rgb(0 0 0 / 0.35);
+}
+
+.flow-command-typed {
+  color: transparent;
+}
+
+.flow-command-list {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 0.25rem);
+  left: 0;
+  z-index: 1;
+  max-height: 16rem;
+  margin: 0;
+  padding: var(--wm-padding);
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--wm-border);
+  border-radius: var(--wm-radius);
+  background: var(--wm-surface);
+  box-shadow: var(--wm-shadow);
+  backdrop-filter: blur(var(--wm-blur));
+  font-size: 13px;
+}
+
+.flow-command-option {
+  display: flex;
+  gap: var(--wm-gap);
+  justify-content: space-between;
+  padding: 0.375rem 0.75rem;
+  color: var(--wm-text);
+  cursor: pointer;
+}
+
+.flow-command-option[aria-selected='true'],
+.flow-command-option:hover {
+  background: var(--wm-highlight);
+}
+
+.flow-command-option-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--wm-text-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
 /* The Library: category sections of node cards, scrolling. */
 .flow-library {
   box-sizing: border-box;

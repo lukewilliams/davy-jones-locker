@@ -48,7 +48,7 @@ export function createFlowMenus(layout, graph) {
   const commands = {
     // A subnet's graph takes the canvas.
     'node.open': {
-      hidden: (id) => graph.flow.findNode(id)?.data.kind !== 'subnet',
+      hidden: (id) => !['subnet', 'loop'].includes(graph.flow.findNode(id)?.data.kind),
       run: (id) => {
         const error = graph.openSubnet(id)
         if (error) graph.log(error, 'error')

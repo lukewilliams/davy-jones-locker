@@ -1,6 +1,7 @@
 """The AI assistant: writes a SQLQuery, PythonScript or JavaScript node's code
 from a request in plain words, through a LiteLLM proxy (OpenAI-compatible
-chat completions, LITELLM_BASE_URL with LITELLM_API_KEY, model ASSIST_MODEL).
+chat completions, LITELLM_BASE_URL with LITELLM_API_KEY, model ASSIST_MODEL; or
+what the Terminal's b. commands set over them: see commands.py).
 
 What the model is sent:
   - the request, the node's kind, and its current code (to change, or start from)
@@ -25,7 +26,7 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, Field
 
-from . import settings, sql
+from . import commands, settings, sql
 
 log = logging.getLogger("davy-jones-locker.assist")
 
@@ -76,7 +77,7 @@ class AssistRequest(BaseModel):
 
 
 def enabled() -> bool:
-    return bool(settings.LITELLM_BASE_URL and settings.LITELLM_API_KEY and settings.ASSIST_MODEL)
+    return bool(commands.assistant_on() and commands.litellm_url() and commands.litellm_key() and commands.assist_model())
 
 
 def summary() -> dict | None:
@@ -84,7 +85,7 @@ def summary() -> dict | None:
     sends this many sample rows), or None when it isn't set up."""
     if not enabled():
         return None
-    return {"model": settings.ASSIST_MODEL, "sampleRows": settings.ASSIST_SAMPLE_ROWS}
+    return {"model": commands.assist_model(), "sampleRows": settings.ASSIST_SAMPLE_ROWS}
 
 
 # ---- Prompts ----
@@ -277,24 +278,24 @@ async def write(body: AssistRequest) -> dict:
     started = time.monotonic()
     message = await complete(system, prompt)
     code, note = read_answer(message)
-    log.info("assist: %s, %s, %d characters in, %.1fs", body.kind, settings.ASSIST_MODEL, len(system) + len(prompt),
+    log.info("assist: %s, %s, %d characters in, %.1fs", body.kind, commands.assist_model(), len(system) + len(prompt),
              time.monotonic() - started)
-    return {"code": code, "note": note, "model": settings.ASSIST_MODEL}
+    return {"code": code, "note": note, "model": commands.assist_model()}
 
 
 async def complete(system: str, prompt: str) -> dict:
     """One chat completion, forced to call write_code: the answer's message."""
     payload = {
-        "model": settings.ASSIST_MODEL,
+        "model": commands.assist_model(),
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
         "tools": [WRITE_CODE],
         "tool_choice": {"type": "function", "function": {"name": "write_code"}},
         "max_tokens": MAX_TOKENS,
     }
-    url = f"{settings.LITELLM_BASE_URL}/chat/completions"
+    url = f"{commands.litellm_url()}/chat/completions"
     try:
         async with httpx.AsyncClient(timeout=settings.ASSIST_TIMEOUT_SECONDS) as client:
-            response = await client.post(url, json=payload, headers={"Authorization": f"Bearer {settings.LITELLM_API_KEY}"})
+            response = await client.post(url, json=payload, headers={"Authorization": f"Bearer {commands.litellm_key()}"})
     except httpx.TimeoutException:
         raise AssistError(f"The AI service didn't answer within {settings.ASSIST_TIMEOUT_SECONDS} seconds.", 504)
     except httpx.HTTPError as e:

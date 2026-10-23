@@ -43,8 +43,10 @@ with `import 'seamonster/style.css'` once in the app's entry. Props:
 | `engine-name` | `'The engine'` | what messages call the engine |
 | `storage-name` | `'davy-jones-locker'` | the open graph is kept in localStorage under `<name>:open-graph`, and DataIngest files in the IndexedDB database `<name>` |
 | `extension-repository` | `'duckdb-extensions'` | where the app serves DuckDB's extensions, relative to the page or absolute (below) |
+| `theme` | `'FLOW'` | the theme, unless `f.Theme` has chosen another in this browser |
+| `commands` | `[]` | the app's own Terminal commands (below), definitions SEAMONSTER's `createCommandRegistry` takes |
 
-Anything else (`title`, `theme`) passes through to SEAMONSTER's `FlowgraphEditor`,
+Anything else (`title`) passes through to SEAMONSTER's `FlowgraphEditor`,
 and so does its `panels` slot, for the app's own panels (SEAMONSTER's README,
 "Panels"):
 
@@ -73,7 +75,12 @@ SEAMONSTER's). The parts are exported too, for an app that wires
 - `createEngineClient({ url, name })`: the engine as FlowgraphEditor's `server`
   prop ([engineClient.js](app/engineClient.js)), checking its `/health` every
   5 s while it answers and every 15 s while it doesn't. Its `runNode` runs a
-  node of one of the app's own kinds, and `nodes()` lists them.
+  node of one of the app's own kinds, and `nodes()` lists them; `commands()`
+  and `runCommand(name, value?)` list and run the engine's `b.` commands;
+  `disconnect()`, `connect()` and `hideAssistant(hidden)` are what
+  `f.Security` and `f.Assistant` use; `runLoop`
+  runs a Loop node as a job (`POST /jobs`), asking how it's going every
+  second, and collects its tables.
 - `defineServerKinds(client)`: defines the engine's own node kinds and
   categories in the browser (with SEAMONSTER's `defineNodeKind`), whenever the
   engine's list of them changes ([serverKinds.js](app/serverKinds.js)). A
@@ -88,6 +95,37 @@ SEAMONSTER's). The parts are exported too, for an app that wires
   elsewhere; `duckdbSql` is one made with the default.
 - `createLocalGraphStorage(name)`: FlowgraphEditor's `storage` prop
   ([localGraphStorage.js](app/localGraphStorage.js)).
+
+### The Terminal's commands
+
+`DavyJonesLocker` gives the Terminal a command field ([commands.js](app/commands.js);
+SEAMONSTER's README, "Terminal commands", has the field). `f.` commands run
+in the browser, `b.` commands on the engine:
+
+| Command | What it does |
+|---|---|
+| `f.Help` | lists the commands, with what each does |
+| `f.Terminal.Clear` | empties the app's log |
+| `f.Theme = "LUX"` | the theme: a built-in one or one the app defines (`defineTheme`), kept in this browser over the `theme` prop |
+| `f.Security.DisconnectBackend`, `f.Security.EnableBackend` | stop talking to the engine (nothing is sent, the footer turns blue, nodes that need it can't run), kept across reloads; and start again |
+| `f.Assistant.Disable`, `f.Assistant.Enable` | hide the AI assistant in this browser, and show it again |
+| `b.LiteLLMURL`, `b.LiteLLMKey` (secret), `b.Assistant.Model`, `b.Assistant.Enabled` | the assistant's settings, over the engine's `.env`, for everyone using that engine until it restarts |
+| `b.Settings.Reset` | forgets every `b.` setting set by command |
+
+The `b.` commands come from the engine (`GET /commands`) whenever it
+connects, so an app's own appear too; while it's away they say so. A `b.`
+setting set here is also kept in this browser, and sent again when the
+engine comes back without it (it restarted); one the engine drops (a new
+`b.LiteLLMURL` drops the key set before) is forgotten here too. What's kept
+is in localStorage under `<storage-name>:` (`theme`, `disconnected`,
+`assistant-hidden`, `engine-settings`), where any script on the page can
+read it, secrets included: this is for local development, until sign-in
+keeps settings per user on the engine (roadmap 8b part b).
+
+An app adds its own `f.` commands with the `commands` prop, and its own `b.`
+ones with the engine's `create_app(commands=...)` (the engine README, "The
+Terminal's b. commands"). `createAppCommands` and `localSettings` are exported
+for an app that wires FlowgraphEditor itself.
 
 ### DuckDB's extensions
 

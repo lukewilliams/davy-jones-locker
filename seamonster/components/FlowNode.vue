@@ -58,13 +58,20 @@ const unwired = computed(() => unwiredPins(props.data, connectedPins.value))
 const statusLabel = computed(() =>
   onServer.value && serverState.value === 'unavailable'
     ? 'Backend not available.'
-    : (STATUS_LABELS[graph.run.status[props.id]] ??
+    : graph.run.progress[props.id]
+      ? progressLabel(graph.run.progress[props.id])
+      : (STATUS_LABELS[graph.run.status[props.id]] ??
       (kind.value.unknown
         ? 'Not available here.'
         : settingsError.value
           ? `${settingsError.value.label}: ${settingsError.value.message}`
           : (unwired.value[0] ?? ''))),
 )
+
+// A running Loop's runs so far: "Running… 37 / 500 · 2 failed".
+function progressLabel({ done, total, failed }) {
+  return `Running… ${done.toLocaleString()} / ${total.toLocaleString()}${failed ? ` · ${failed} failed` : ''}`
+}
 
 // Every pin on this side, spaced evenly down it (see SLOTS AND PINS in
 // kindRegistry.js): the main pin, then named input pins, or pins of slots of

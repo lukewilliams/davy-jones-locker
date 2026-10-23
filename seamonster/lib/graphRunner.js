@@ -1,10 +1,13 @@
 import { FILE_FORMATS } from './fileFormats.js'
 import { crsOfType } from './geoExport.js'
 import { spatialWarnings } from './spatialChecks.js'
-import { checkNode, isKnownKind, kindInfo, NODE_KINDS, referenceName, slotsOf, slotsThrough, toIdentifier, uniqueId, unwiredPins, withDefaults } from './nodeKinds.js'
+import {
+  checkNode, isKnownKind, kindInfo, NODE_KINDS, referenceName, slotsOf, slotsThrough, toIdentifier, uniqueId, unwiredPins,
+  whereItRuns, withDefaults,
+} from './nodeKinds.js'
 import { copyTo, literal, loadExcel, quote } from './sqlText.js'
 import { xlsxSheetNames } from './xlsx.js'
-import { boundaryPins, graphAt, MAX_DEPTH, SUBNET, subnetGraph } from './subnets.js'
+import { boundaryPins, graphAt, isGraphKind, LOOP, LOOP_ITEM, LOOP_STATUS, MAX_DEPTH, subnetGraph } from './subnets.js'
 import { unzip } from './zip.js'
 
 // Rows per page of a node's output in the Data panel.
@@ -173,21 +176,22 @@ export function createGraphRunner(sql) {
   // DataIngest node's tables). `server` is the server engine: { state
   // ('connected', 'unavailable' or 'checking'), query?, runPython? }.
   // `readers` (a Map of name to function) read each output table while it's
-  // there: see readOutput. Resolves to { [path]: result } for every node that
-  // ran, inside subnets too; rejects if the engine can't run at all.
-  const run = (doc, targetIds, { paged = null, getFile, server = { state: 'unavailable' }, readers = null }) =>
-    queued(async () => (await runNow(doc, targetIds, paged, { getFile, server, readers })).results)
+  // there: see readOutput. `progress(path, { done, total, failed })` follows
+  // a Loop's runs. Resolves to { [path]: result } for every node that ran,
+  // inside subnets too; rejects if the engine can't run at all.
+  const run = (doc, targetIds, { paged = null, getFile, server = { state: 'unavailable' }, readers = null, progress = null }) =>
+    queued(async () => (await runNow(doc, targetIds, paged, { getFile, server, readers, progress })).results)
 
   // Resolves to { results, outputs }: the results, and the tables each node
   // that ran left in OUTPUTS (until the next run), by path.
-  async function runNow(doc, targetIds, paged, { getFile, server, readers = null }) {
+  async function runNow(doc, targetIds, paged, { getFile, server, readers = null, progress = null }) {
     if (!sql) throw new Error("No SQL engine is connected, so nodes can't run.")
     await sql.query(`DROP SCHEMA IF EXISTS ${OUTPUTS} CASCADE`)
     await sql.query(`CREATE SCHEMA ${OUTPUTS}`)
     const results = {}
     // Per node that ran, by path: { table } or { tables: [{ name, label, table }] }.
     const outputs = new Map()
-    const context = { doc, paged, results, outputs, getFile, server, readers, prefix: '', depth: 0, bindings: null }
+    const context = { doc, paged, results, outputs, getFile, server, readers, progress, prefix: '', depth: 0, bindings: null }
     await runGraph(doc, targetIds, context)
     return { results, outputs }
   }
@@ -204,7 +208,7 @@ export function createGraphRunner(sql) {
     for (const target of targets) {
       const [id, ...rest] = target.split('/')
       if (!nodes.has(id)) continue
-      if (rest.length && nodes.get(id).kind === SUBNET) inside.set(id, [...(inside.get(id) ?? []), rest.join('/')])
+      if (rest.length && isGraphKind(nodes.get(id).kind)) inside.set(id, [...(inside.get(id) ?? []), rest.join('/')])
       else if (!rest.length) own.push(id)
     }
     const { order, inputs } = upstreamOrder(graph, [...own, ...inside.keys()])
@@ -227,7 +231,8 @@ export function createGraphRunner(sql) {
       try {
         const exposed = inputsOf(wires, nodes, outputs)
         if (!whole.has(id)) {
-          await runSubnet(node, exposed, inside.get(id), level, false)
+          if (node.kind === LOOP) await runLoop(node, exposed, inside.get(id), level, null, false)
+          else await runSubnet(node, exposed, inside.get(id), level, false)
           continue
         }
         await exposeInputs(exposed)
@@ -255,34 +260,263 @@ export function createGraphRunner(sql) {
     const graph = subnetGraph(node, context.doc.subnets)
     if (!graph) return { error: `This subnet uses "${node.subnetRef}" from the graph's shared subnets, which the graph doesn't have.` }
     const pins = boundaryPins(graph)
-    const bindings = new Map()
-    for (const pin of pins.inputs) {
-      const input = inputs.find((i) => i.pin === pin)
-      bindings.set(pin, !input ? { error: `Nothing is wired into ${name}'s ${pin} input.` }
-        : input.tables ? { tables: input.tables } : { table: input.table })
-    }
+    const bindings = bindPins(pins, inputs, name)
     const targets = [...(whole ? pins.outputs : []), ...(innerTargets ?? [])]
     const inner = { ...context, prefix: `${path}/`, depth: context.depth + 1, bindings }
     const outputs = await runGraph(graph, targets, inner)
     if (!whole) return null
 
     const failed = pins.outputs.some((o) => context.results[`${path}/${o}`]?.error)
-    if (failed) {
-      const nodes = new Map(graph.nodes.map((n) => [n.id, n]))
-      const [id, origin] = Object.entries(context.results).find(([key, r]) =>
-        key.startsWith(`${path}/`) && !key.slice(path.length + 1).includes('/') && r.error && !/^Upstream node .+ failed\.$/.test(r.error),
-      ) ?? []
-      if (!origin) return { error: `${name} failed.` }
-      const child = nodes.get(id.slice(path.length + 1))
-      // A subnet's own error starts with its name already.
-      return { error: child?.kind === SUBNET ? `${name} › ${origin.error}` : `${name} › ${child?.label || child?.id}: ${origin.error}` }
-    }
+    if (failed) return { error: `${name} › ${failure(path, graph, context.results)}` }
     const made = { slots: {} }
     pins.outputs.forEach((o, i) => {
       const out = outputs.get(o)
       if (i === 0) Object.assign(made, out.tables ? { tables: out.tables } : { table: out.table })
       else made.slots[o] = out.tables ? { tables: out.tables } : out.table
     })
+    return made
+  }
+
+  // What a subnet's Input nodes put out: what's wired into each pin (the
+  // first slot each wire carries), or why there's nothing.
+  function bindPins(pins, inputs, name) {
+    const bindings = new Map()
+    for (const pin of pins.inputs) {
+      const input = inputs.find((i) => i.pin === pin)
+      bindings.set(pin, !input ? { error: `Nothing is wired into ${name}'s ${pin} input.` }
+        : input.tables ? { tables: input.tables } : { table: input.table })
+    }
+    return bindings
+  }
+
+  // Where a failed run of a graph at `path` started: the node inside whose
+  // error didn't come from upstream, as "Classify: message" (a subnet's own
+  // error starts with its name already).
+  function failure(path, graph, results) {
+    const nodes = new Map(graph.nodes.map((n) => [n.id, n]))
+    const [key, origin] = Object.entries(results).find(([key, r]) =>
+      key.startsWith(`${path}/`) && !key.slice(path.length + 1).includes('/') && r.error && !/^Upstream node .+ failed\.$/.test(r.error),
+    ) ?? []
+    if (!origin) return 'it failed.'
+    const child = nodes.get(key.slice(path.length + 1))
+    return isGraphKind(child?.kind) ? origin.error : `${child?.label || child?.id}: ${origin.error}`
+  }
+
+  // Whether anything in a graph (in its subnets too) runs only on the
+  // server, or only in the browser.
+  function placesIn(graph, library, depth = 0) {
+    const found = { server: false, browser: false }
+    for (const n of graph?.nodes ?? []) {
+      const where = whereItRuns(n)
+      if (where === 'server' && n.kind !== LOOP) found.server = true
+      if (where === 'browser') found.browser = true
+      if (isGraphKind(n.kind) && depth < MAX_DEPTH) {
+        const inner = placesIn(subnetGraph(n, library), library, depth + 1)
+        found.server ||= inner.server
+        found.browser ||= inner.browser
+      }
+    }
+    return found
+  }
+
+  // ---- Loops (roadmap 10d) ----
+
+  // A Loop node: its graph run once per row of what's wired into its `item`
+  // pin (up to Most runs), the Input node `item` putting out that run's row and
+  // its other Inputs the same table every run. Each Output's table is gathered
+  // across the runs that completed, `_key` (the Key column's value, or the
+  // row number) and `_iteration` (from 1) first, by column name; `status`
+  // has a row per run: _key, _iteration, status (completed, failed or
+  // skipped), error, duration_ms, rows (each Output's row count, as JSON).
+  // When something inside runs only on the server, the server runs it all
+  // (runLoopOnServer). With `whole` false, only `innerTargets` run, in the
+  // first run (to look inside), and the loop has no result of its own.
+  async function runLoop(node, inputs, innerTargets, context, ctx, whole) {
+    const path = context.prefix + node.id
+    const name = node.label || node.id
+    if (context.depth >= MAX_DEPTH) {
+      return { error: `Subnets here are nested more than ${MAX_DEPTH} deep: does one contain itself?` }
+    }
+    const graph = subnetGraph(node, context.doc.subnets)
+    if (!graph) return { error: `This loop uses "${node.subnetRef}" from the graph's shared subnets, which the graph doesn't have.` }
+    const pins = boundaryPins(graph)
+    if (!pins.inputs.includes(LOOP_ITEM)) {
+      return { error: `A loop needs an Input node called ${LOOP_ITEM} inside: it puts out each run's row.` }
+    }
+    if (pins.outputs.includes(LOOP_STATUS)) {
+      return { error: `An Output inside is called ${LOOP_STATUS}, which is the loop's own output saying how each run went. Rename it.` }
+    }
+    const items = inputs.find((i) => i.pin === LOOP_ITEM)
+    if (!items) return { error: `Nothing is wired into ${name}'s items input.` }
+    if (items.tables) {
+      return { error: `What's wired into items has ${items.tables.length} tables: wire in one (a SQLQuery node can pick it).` }
+    }
+    const places = placesIn(graph, context.doc.subnets)
+    if (whole && places.server) {
+      if (places.browser) {
+        return { error: 'Nodes inside this loop run only on the server, and others (JavaScript) only in the browser, so it can\'t run anywhere.' }
+      }
+      return runLoopOnServer(node, pins, inputs, context, ctx)
+    }
+
+    const settings = withDefaults(node)
+    const most = Math.max(1, Math.floor(settings.loopMax ?? 1000))
+    const keyColumn = (settings.loopKey ?? '').trim()
+    const stop = settings.loopOnError === 'stop'
+    const total = Number((await sql.query(`SELECT count(*) FROM ${items.table}`)).rows[0][0])
+    const runs = whole ? Math.min(total, most) : Math.min(total, 1)
+    let keys = null
+    if (keyColumn) {
+      const columns = (await sql.query(`DESCRIBE ${items.table}`)).rows.map(([column]) => column)
+      if (!columns.includes(keyColumn)) {
+        return { error: `Key column: ${keyColumn} isn't a column of what's wired into items (${columns.join(', ')}).` }
+      }
+      keys = (await sql.query(`SELECT CAST(${quote(keyColumn)} AS VARCHAR) FROM ${items.table} LIMIT ${runs}`)).rows.map(([k]) => k)
+    }
+
+    const prefix = `${path}/`
+    const itemTable = `${OUTPUTS}.${quote(`${path}#${LOOP_ITEM}`)}`
+    const parts = Object.fromEntries(pins.outputs.map((o) => [o, []]))
+    const statuses = []
+    let failed = 0
+    let stopped = null
+    for (let i = 0; i < runs; i++) {
+      const key = keys ? keys[i] : String(i + 1)
+      if (stopped) {
+        statuses.push({ key, i, status: 'skipped', error: null, ms: null, rows: null })
+        continue
+      }
+      const started = performance.now()
+      for (const k of Object.keys(context.results)) if (k.startsWith(prefix)) delete context.results[k]
+      await sql.query(`DROP TABLE IF EXISTS ${itemTable}`)
+      await sql.query(`CREATE TABLE ${itemTable} AS SELECT * FROM ${items.table} LIMIT 1 OFFSET ${i}`)
+      const bindings = bindPins(pins, inputs, name)
+      bindings.set(LOOP_ITEM, { table: itemTable })
+      const inner = { ...context, prefix, depth: context.depth + 1, bindings }
+      const outputs = await runGraph(graph, whole ? pins.outputs : innerTargets, inner)
+      if (!whole) return null
+
+      let error = pins.outputs.some((o) => context.results[prefix + o]?.error) ? failure(path, graph, context.results) : null
+      const rows = {}
+      const copies = {} // this run's copy of each Output, with its _key and _iteration
+      for (const o of error ? [] : pins.outputs) {
+        const out = outputs.get(o)
+        if (out.tables) {
+          error = `${o}: an Output in a loop takes one table, and this one has ${out.tables.length}.`
+          break
+        }
+        copies[o] = `${OUTPUTS}.${quote(`${path}#${o}#${i}`)}`
+        await sql.query(
+          `CREATE TABLE ${copies[o]} AS SELECT ${literal(key)} AS _key, ${i + 1} AS _iteration, ` +
+            `COLUMNS(c -> c NOT IN ('_key', '_iteration')) FROM ${out.table}`,
+        )
+        rows[o] = Number((await sql.query(`SELECT count(*) FROM ${copies[o]}`)).rows[0][0])
+      }
+      if (error) {
+        for (const copy of Object.values(copies)) await sql.query(`DROP TABLE ${copy}`)
+        failed++
+        if (stop) stopped = { i, key, error }
+      } else {
+        for (const [o, copy] of Object.entries(copies)) parts[o].push(copy)
+      }
+      statuses.push({ key, i, status: error ? 'failed' : 'completed', error, ms: Math.round(performance.now() - started), rows: error ? null : rows })
+      await dropTables(prefix)
+      context.progress?.(path, { done: i + 1, total: runs, failed })
+    }
+    if (!whole) return null // no rows: nothing inside ran
+    await sql.query(`DROP TABLE IF EXISTS ${itemTable}`)
+    if (stopped) {
+      for (const o of pins.outputs) for (const p of parts[o]) await sql.query(`DROP TABLE ${p}`)
+      return { error: `Run ${stopped.i + 1} (_key ${stopped.key}) failed, so the loop stopped: ${stopped.error}` }
+    }
+
+    const made = { slots: {}, warnings: [] }
+    for (const [i, o] of pins.outputs.entries()) {
+      const target = i === 0 ? ctx.table() : ctx.slotTable(o)
+      await gather(parts[o], target, o)
+      if (i === 0) made.table = target
+      else made.slots[o] = target
+    }
+    if (!pins.outputs.length) {
+      made.table = ctx.table()
+      await gather([], made.table, null)
+    }
+    const status = ctx.slotTable(LOOP_STATUS)
+    await sql.query(
+      `CREATE TABLE ${status} (_key VARCHAR, _iteration INTEGER, status VARCHAR, error VARCHAR, duration_ms BIGINT, "rows" VARCHAR)`,
+    )
+    for (const r of statuses) {
+      const value = (v) => (v === null ? 'NULL' : literal(String(v)))
+      await sql.query(
+        `INSERT INTO ${status} VALUES (${value(r.key)}, ${r.i + 1}, ${literal(r.status)}, ${value(r.error)}, ` +
+          `${r.ms ?? 'NULL'}, ${value(r.rows && JSON.stringify(r.rows))})`,
+      )
+    }
+    made.slots[LOOP_STATUS] = status
+    if (total > runs) made.warnings.push(`items has ${total.toLocaleString()} rows: the loop ran the first ${runs.toLocaleString()} (Most runs).`)
+    if (failed) made.warnings.push(`${failed} of ${runs} runs failed: ${node.id}_${LOOP_STATUS} says which, and why.`)
+    return made
+  }
+
+  // Tables whose name starts with `prefix` (a level's nodes'), dropped.
+  async function dropTables(prefix) {
+    const { rows } = await sql.query(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema = '${OUTPUTS}' AND starts_with(table_name, ${literal(prefix)})`,
+    )
+    for (const [name] of rows) await sql.query(`DROP TABLE IF EXISTS ${OUTPUTS}.${quote(name)}`)
+  }
+
+  // Each run's copy of one Output, gathered into `target` by column name, in
+  // the runs' order, and dropped. No runs: just _key and _iteration.
+  async function gather(parts, target, output) {
+    if (!parts.length) {
+      await sql.query(`CREATE TABLE ${target} AS SELECT NULL::VARCHAR AS _key, NULL::INTEGER AS _iteration WHERE false`)
+      return
+    }
+    try {
+      const union = parts.map((p) => `SELECT * FROM ${p}`).join(' UNION ALL BY NAME ')
+      await sql.query(`CREATE TABLE ${target} AS SELECT * FROM (${union}) WHERE false`)
+    } catch (e) {
+      throw new Error(
+        `The runs' ${output} outputs don't fit together: each run's ${output} needs the same columns, with the same types. ${message(e)}`,
+      )
+    }
+    for (const p of parts) {
+      await sql.query(`INSERT INTO ${target} BY NAME SELECT * FROM ${p}`)
+      await sql.query(`DROP TABLE ${p}`)
+    }
+  }
+
+  // A loop the server runs whole, as a job: its node (with its graph, and the
+  // graph's shared subnets) and what's wired into its pins, as Parquet; its
+  // progress followed while it goes; its outputs loaded back as its tables.
+  async function runLoopOnServer(node, pins, inputs, context, ctx) {
+    const name = node.label || node.id
+    if (ctx.server.state !== 'connected' || typeof ctx.server.runLoop !== 'function') {
+      return { error: `${name} runs on the server, since nodes inside it run only there, and the server isn't available.` }
+    }
+    const path = context.prefix + node.id
+    const sent = []
+    for (const pin of pins.inputs) {
+      const input = inputs.find((i) => i.pin === pin)
+      if (!input) continue
+      if (input.tables) {
+        return { error: `What's wired into ${pin} has ${input.tables.length} tables, and a loop the server runs takes one per input: wire in one.` }
+      }
+      sent.push({ pin, bytes: await parquetOf(input.table) })
+    }
+    const result = await ctx.server.runLoop({
+      node: ctx.node, path, subnets: context.doc.subnets ?? {}, inputs: sent,
+      progress: (p) => context.progress?.(path, p),
+    })
+    if (result.error) return { error: result.error }
+    const made = { slots: {}, warnings: result.warnings ?? [] }
+    for (const o of result.outputs ?? []) {
+      const table = o.slot === null ? ctx.table() : ctx.slotTable(o.slot)
+      await loadParquet(table, o.bytes)
+      if (o.slot === null) made.table = table
+      else made.slots[o.slot] = table
+    }
     return made
   }
 
@@ -374,8 +608,10 @@ export function createGraphRunner(sql) {
     ]
     if (errors.length) return { error: errors.join(' ') }
     const ctx = runContext(withDefaults(node), inputs, context)
-    // A subnet runs its graph; what was asked for inside it runs too.
+    // A subnet runs its graph, a loop its graph per row; what was asked for
+    // inside either runs too.
     ctx.runSubnet = () => runSubnet(node, inputs, context.inner, context, true)
+    ctx.runLoop = () => runLoop(node, inputs, context.inner, context, ctx, true)
     const { table, tables, slots: filled, error, ...made } = (await run(ctx)) ?? {}
     if (error) return { error, ...(made.output !== undefined ? { output: made.output } : {}) }
 

@@ -72,6 +72,7 @@ components/             what the editor is built from
   AssistantField.vue    Manage's AI assistant, above a node's SQL or code
   NodeField.vue         one of a kind's declared fields in Manage (text, number, select, code, file...)
   DataIngestFields.vue, ExportInputField.vue, SubnetFields.vue   the built-ins' custom fields (file chooser, Input picker, a subnet's Open, pins and graph)
+  CommandField.vue      the Terminal's command field: completion, history
   ServerStatus.vue      bottom left: the server connected (green) or not (blue)
   flowMenus.js          the graph's context menus and their commands
 lib/
@@ -96,6 +97,7 @@ lib/
   panelLayout.js        all panel layout state and rules (one per window)
   themes.js             the theme registry: the built-in themes and defineTheme
   keyboard.js           isTyping: where single-key shortcuts must not fire
+  commands.js           the Terminal's commands: registry, parser, completion, running one
 ```
 
 The canvas fills the window and can be larger than it. Panels and the title are
@@ -111,6 +113,7 @@ positioned against the window, not the canvas, so they stay put while it pans.
 | `sql` | none | the engine nodes run on (see Running nodes) |
 | `server` | none | the server engine (see Running nodes) |
 | `autoHideRails` | `true` | open panels leave the rails, as long as nothing on their edge can cover them; `false` keeps a rail for every panel (see Panels) |
+| `terminalCommands` | none | the Terminal's commands, a registry from `createCommandRegistry` (see Terminal commands). Without it the Terminal has no command field |
 
 ## Themes
 
@@ -234,6 +237,8 @@ query({ sql, inputs })      -> Promise<Uint8Array>  the result, as Parquet
 runPython({ code, inputs }) -> Promise<{ output, value?, variables?, error?, table? }>
 runNode({ kind, node, inputs, files })
                             -> Promise<{ output, value?, error?, outputs }>  (optional)
+runLoop({ node, path, subnets, inputs, progress })
+                            -> Promise<{ warnings, error?, outputs }>  (optional)
 assist({ kind, request, code, inputs })
                             -> Promise<{ code, note, model }>  (optional)
 ```
@@ -242,7 +247,11 @@ assist({ kind, request, code, inputs })
 `name.table`). `runNode` runs a node of a kind the server supplies (below):
 its `inputs` are `[{ ref, id, slot, pin, bytes }]` (or with `tables: [{ name,
 bytes }]`), `files` its file fields' files `[{ key, bytes }]`, and `outputs`
-what it made, `[{ slot, bytes }]` or with `tables`, slot null for its first. DAVY JONES' LOCKER's app shell supplies one
+what it made, `[{ slot, bytes }]` or with `tables`, slot null for its first.
+`runLoop` runs a Loop node on the server (see Loops): `node` its data, `path`
+its path, `subnets` the document's shared subnets, `inputs` `[{ pin, bytes }]`
+(`item` for items), `progress({ done, total, failed })` called as its runs
+go, and `outputs` `[{ slot, bytes }]`. DAVY JONES' LOCKER's app shell supplies one
 (`createEngineClient({ url, name })`), which asks the engine's `GET /health`
 for `{ status: 'ok', host?, port?, local? }` every 5 s while it answers, every 15 s
 while it doesn't (and not while the page is hidden). What it changes:
@@ -646,6 +655,55 @@ Known limits:
 - **Shared subnets no one uses stay in the document;** there's no way to
   delete one yet.
 
+## Loops
+
+A **Loop** node (Custom) is a subnet run once per row (roadmap 10d): screen
+each of 500 sites, say. Everything under Subnets holds for it (opening it,
+its pins, sharing its graph), and:
+
+- **Its Input node `item`** is its items pin: wire a table into it, and the
+  loop runs its graph once per row, `item` putting out that row (a one-row
+  table). Its other Inputs put out the same table every run. A new Loop
+  starts as `item` wired to an Output, so each run passes its row through.
+- **Each Output gathers every run's table**, by column name, with `_key` and
+  `_iteration` first: `_key` is the run's row's value in Key column, or its
+  row number; `_iteration` counts runs from 1. A failed run adds no rows.
+  An Output takes one table (not a workbook's several).
+- **`<id>_status`**, an output of its own (with its own pin): a row per run,
+  `_key`, `_iteration`, `status` (completed, failed or skipped), `error` (where
+  it started: `Classify: …`), `duration_ms` and `rows` (each Output's row
+  count, as JSON). An Output inside can't be called `status`.
+- **Settings:** Key column; When a run fails (carry on with the rest, the
+  default, which warns how many failed; or stop the loop, which fails it,
+  naming the run); Most runs (1000: rows past it aren't run, with a
+  warning); Runs at once (on the server only).
+- **Where it runs:** in the browser, one run at a time, unless something
+  inside runs only on the server (PythonScript, SQL reading the server's
+  tables, the server's own kinds, a subnet or loop with one of those inside).
+  Then the server runs the whole loop, as a job (`server.runLoop`), with as
+  many runs at once as Runs at once asks (up to the engine's
+  `LOOP_MAX_CONCURRENCY`). A loop with nodes only the server runs and
+  JavaScript, which only the browser runs, can't run, and says so. The node
+  blinks its dot when it'll run on the server, as far as its own graph
+  shows (a shared graph, or one inside, is worked out when it runs).
+- **Progress:** the node's face counts runs while it goes, "Running… 37 /
+  500 · 2 failed" (`run.progress` on the graph store, by ID).
+- **A node inside run on its own** runs in the first run (the first row), in
+  the browser, so you can see what a run does.
+
+Known limits:
+
+- **Opened after a run, a loop shows its last run's nodes** (in the
+  browser), or none when the server ran it: the server sends back the
+  outputs, not what each run's nodes did. `status` says how each run went.
+- **No resume yet:** running a loop again runs every row again.
+- **In the browser, one run at a time;** on the server, PythonScript inside
+  runs one at a time whatever Runs at once says (the runner runs one script
+  at a time). Keep Runs at once at 1 for loops of slow scripts, or their
+  waits can outlast the engine's run timeout.
+- **A loop the server runs takes one table per input:** a workbook's sheets
+  need picking first (a SQLQuery node).
+
 ## Defining node kinds
 
 Node kinds live in a registry. SEAMONSTER's own are defined in it
@@ -716,7 +774,7 @@ colour (`label`, white by default).
 | `loadParquet(table, bytes)`, `loadRows(table, rows)` | create a table from Parquet, or from rows |
 | `serverTables(query)` | the tables a query reads that no input supplies |
 | `spatialWarnings(query)` | warnings about a query's spatial SQL (see "Spatial warnings"), `[text]`; never throws |
-| `runSubnet()`, `boundInput` | the built-in Subnet and Input kinds' (see Subnets) |
+| `runSubnet()`, `runLoop()`, `boundInput` | the built-in Subnet, Loop and Input kinds' (see Subnets, Loops) |
 
 **What `run` returns** (or throws, for an error):
 
@@ -977,7 +1035,8 @@ The behaviour lives in [panelLayout.js](lib/panelLayout.js):
   rail too, so a covered panel can still be reached. A rail click behaves like
   a title click. With `autoHideRails` off (a FlowgraphEditor prop), every
   panel keeps its rail, open or collapsed.
-- **Hotkeys:** a panel's own key (T, L, G, D, M; the Map panel's P) acts like a rail click:
+- **Hotkeys:** a panel's own key (T, L, G, D, M; the Map panel's P) acts like a rail click
+  (and `~` focuses the Terminal's command field, opening it):
   opens it, brings it to the front if it's covered, or else collapses it.
   Ignored with Ctrl, Cmd or Alt held, or while typing in a field.
 - **Ctrl+Space** with no panel active (after clicking the canvas) collapses all
@@ -1047,10 +1106,58 @@ so this styling reaches only its menus.
   into named tokens so they can be adjusted in one place. Nodes and the menu
   highlight both use them.
 
-## Planned: terminal commands
+## Terminal commands
 
-Step 8f: a command field at the bottom of the Terminal panel (~ focuses it).
-`f.` commands run in the browser (`f.Theme = "FLOW"`,
-`f.Security.DisconnectBackend`), `b.` commands on the engine
-(`b.LiteLLMKey = "…"`), with completion and namespaces. The commands and
-their results go in the app's log. The design is in the roadmap (step 8f).
+Step 8f ([commands.js](lib/commands.js), [CommandField.vue](components/CommandField.vue)):
+a command field at the bottom of the Terminal, when the host gives
+FlowgraphEditor `terminalCommands`. SEAMONSTER has the field, the parser,
+completion and the registry, and knows no commands itself: DAVY JONES'
+LOCKER's app shell defines `f.` (the browser's) and `b.` (the engine's), and
+an app adds its own.
+
+- **Focus:** `~` (or `` ` ``) anywhere in the window but a text field opens
+  the Terminal, if it's collapsed, with the field focused. Escape goes back
+  to the window. While the field has focus, the Terminal shows the app's
+  log.
+- **Running:** Enter. The command shows right-aligned in blue in the app's
+  log, and what it printed under it (in the error colour for an error).
+  `f.Theme = "LUX"` sets a setting, `f.Theme` prints it, `f.Security.DisconnectBackend`
+  runs an action, and a namespace alone (`f.Security`) lists what's in it.
+  Names match whatever the case. Values are quoted text, numbers, or true
+  and false; commands are parsed, never evaluated.
+- **Completing:** the only match shows after what's typed, faint; Tab or
+  Enter takes it. With several, once 3 characters are typed (or after `=`,
+  for a setting's fixed values), a list opens above the field: Up and Down
+  move, Enter or a click picks, Right goes into a namespace (›) and Left
+  back out, Escape closes it. Settings show their value; secrets only
+  whether they're set.
+- **History:** Up and Down with the list closed go through this session's
+  commands. A secret's value isn't kept: recalling `b.LiteLLMKey = ••••`
+  gives `b.LiteLLMKey = ` to finish.
+
+The registry:
+
+```js
+import { createCommandRegistry } from 'seamonster'
+
+const commands = createCommandRegistry()
+commands.define([
+  { name: 'app.Greet', kind: 'action', description: 'Says hello.', run: () => 'Hello.' },
+  {
+    name: 'app.Region', kind: 'setting', description: 'Where the app looks.',
+    values: () => ['east', 'west'], get: () => region, set: (value) => { region = value },
+  },
+])
+```
+
+A definition is `{ name (dotted, its namespace first), kind ('action' or
+'setting'), description }` and, for an action, `run(ctx)`; for a setting,
+`get()`, `set(value, ctx)`, and optionally `type` ('string', 'number' or
+'boolean'), `values()` (the values it takes, when they're fixed) and
+`secret` (never shown, echoed or kept; `get()` then says only whether it's
+set). `run` and `set` may be async, return what to print, and throw an
+Error to print its message as an error. `ctx` is `{ graph, registry }` (the
+graph store: `clearLog()`, `log(text, type)` and the rest). The registry
+also has `remove(prefix)` and `unavailable(prefix, message)` (what to say
+for a command under `prefix` that isn't defined: the app shell's `b.` while
+the engine is away). `listing(registry)` is what f.Help prints.

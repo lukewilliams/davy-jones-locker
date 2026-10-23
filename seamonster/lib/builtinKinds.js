@@ -4,10 +4,10 @@ import { FILE_FORMATS, formatFromName, hasTables, withExtension, writableFormats
 import { crsOfType, writeGeoJson, writeGeoPackage, writeKml, writeShapefile } from './geoExport.js'
 import { lonLatExportWarnings } from './spatialChecks.js'
 import { runJavaScript } from './jsSandbox.js'
-import { defineNodeKind, toIdentifier } from './kindRegistry.js'
+import { defineNodeKind, toIdentifier, whereItRuns } from './kindRegistry.js'
 import { copyTo, fromHex, loadExcel, quote } from './sqlText.js'
 import { repairXlsx } from './xlsx.js'
-import { boundaryPins, newSubnetGraph, SUBNET, SUBNET_INPUT, SUBNET_OUTPUT, subnetFace } from './subnets.js'
+import { boundaryPins, LOOP, LOOP_ITEM, LOOP_STATUS, newSubnetGraph, SUBNET, SUBNET_INPUT, SUBNET_OUTPUT, subnetFace } from './subnets.js'
 import SubnetFields from '../components/SubnetFields.vue'
 
 // SEAMONSTER's own node kinds, defined as an app defines its own (see
@@ -340,6 +340,66 @@ defineNodeKind({
   },
   run: (ctx) => ctx.runSubnet(),
 })
+
+// A Loop node: a subnet run once per row of what's wired into its `item` pin
+// (shown as "items"), the Input node `item` putting out that run's row; its
+// other Inputs put out the same table every run. Each Output is gathered
+// across the runs, with each run's `_key` and `_iteration` first, and
+// `status` says how each run went. It runs in the browser, one run at a time,
+// unless something inside runs only on the server: then the server runs it
+// all, as a job (graphRunner's runLoop).
+defineNodeKind({
+  kind: LOOP,
+  label: 'Loop',
+  description: "Runs a graph of its own once per row of what's wired into items, and gathers each output across the runs, with a status output saying how each run went. Double-click it to open it.",
+  category: 'custom',
+  idPrefix: 'loop',
+  mainInput: false,
+  // Where it runs, as far as its own graph says (a shared one, or a subnet
+  // inside naming one, is worked out when it runs).
+  where: (data) => (serverInside(data.subnet) ? 'server' : null),
+  inputPins: (data) =>
+    (data.subnetPins?.inputs ?? []).map((name) =>
+      name === LOOP_ITEM
+        ? { name, label: 'items', hint: 'A run per row: inside, the Input node item puts out that row.', required: true }
+        : { name, label: name, hint: 'The same table every run.' },
+    ),
+  slots: (data) => [
+    ...(data.subnetPins?.outputs ?? []).slice(1).map((name) => ({ name, pin: true })),
+    { name: LOOP_STATUS, pin: true },
+  ],
+  fields: [
+    { type: 'custom', component: SubnetFields },
+    {
+      key: 'loopKey', label: 'Key column', type: 'text', mono: true, placeholder: 'row number',
+      hint: "Each run's _key in the outputs: this column of its row, or its row number.",
+    },
+    {
+      key: 'loopOnError', label: 'When a run fails', type: 'select', default: 'continue',
+      options: [{ value: 'continue', label: 'Carry on with the rest' }, { value: 'stop', label: 'Stop the loop' }],
+    },
+    {
+      key: 'loopMax', label: 'Most runs', type: 'number', min: 1, step: 1, default: 1000,
+      hint: 'Rows past this many aren\'t run (a warning says so).',
+      validate: [{ min: 1, message: 'At least 1.' }],
+    },
+    {
+      key: 'loopConcurrency', label: 'Runs at once', type: 'number', min: 1, step: 1, default: 1,
+      hint: 'On the server only: in the browser it runs one at a time. Python inside runs one at a time whatever this says.',
+      validate: [{ min: 1, message: 'At least 1.' }],
+    },
+  ],
+  create: () => {
+    const graph = newSubnetGraph(LOOP_ITEM)
+    return { subnet: graph, ...subnetFace(boundaryPins(graph)) }
+  },
+  run: (ctx) => ctx.runLoop(),
+})
+
+// Whether anything in a graph (its inline subnets' too) runs only on the server.
+function serverInside(graph) {
+  return (graph?.nodes ?? []).some((n) => whereItRuns(n) === 'server' || serverInside(n.subnet))
+}
 
 // ---- Inside a subnet (the Library and menus offer these only there) ----
 

@@ -2,10 +2,11 @@
 import { computed, inject, ref, useId, watch } from 'vue'
 import { FLOW_GRAPH } from '../lib/flowGraph.js'
 import { referenceName } from '../lib/nodeKinds.js'
+import { LOOP, LOOP_ITEM, LOOP_STATUS } from '../lib/subnets.js'
 
-// A Subnet node's Manage fields (a custom field, see builtinKinds.js): Open,
-// its pins, and its graph: its own, or a shared one the document keeps by
-// name (which every subnet using it runs, and editing it changes for all).
+// A Subnet or Loop node's Manage fields (a custom field, see builtinKinds.js):
+// Open, its pins, and its graph: its own, or a shared one the document keeps
+// by name (which every node using it runs, and editing it changes for all).
 const props = defineProps({ node: { type: Object, required: true } })
 
 const graph = inject(FLOW_GRAPH)
@@ -20,11 +21,15 @@ watch(
 )
 
 const pins = computed(() => props.node.data.subnetPins ?? { inputs: [], outputs: [] })
+const isLoop = computed(() => props.node.data.kind === LOOP)
+// A Loop's item pin is shown as items.
+const inputs = computed(() => pins.value.inputs.map((name) => (isLoop.value && name === LOOP_ITEM ? `items (${LOOP_ITEM})` : name)))
 // How downstream nodes read each output: the first by the node's reference
-// name, the others by their own.
-const outputs = computed(() =>
-  pins.value.outputs.map((name, i) => (i === 0 ? referenceName(props.node.id, props.node.data) : `${props.node.id}_${name}`)),
-)
+// name, the others by their own (and a Loop's status).
+const outputs = computed(() => [
+  ...pins.value.outputs.map((name, i) => (i === 0 ? referenceName(props.node.id, props.node.data) : `${props.node.id}_${name}`)),
+  ...(isLoop.value ? [`${props.node.id}_${LOOP_STATUS}`] : []),
+])
 const shared = computed(() => props.node.data.subnetRef ?? '')
 const sharedNames = computed(() => Object.keys(graph.library))
 const uses = computed(() => {
@@ -50,7 +55,7 @@ const ids = { graph: `${uid}-graph`, share: `${uid}-share`, note: `${uid}-note` 
 
 <template>
   <div class="flow-field">
-    <button type="button" class="flow-button flow-button--wide" @click="open">Open subnet</button>
+    <button type="button" class="flow-button flow-button--wide" @click="open">Open {{ isLoop ? 'loop' : 'subnet' }}</button>
     <p class="flow-field-hint">Or double-click it, or press Enter. Escape goes back up.</p>
     <p v-if="error" class="flow-field-error">{{ error }}</p>
   </div>
@@ -58,14 +63,16 @@ const ids = { graph: `${uid}-graph`, share: `${uid}-share`, note: `${uid}-note` 
   <div class="flow-field">
     <span class="flow-field-label">Pins</span>
     <p class="flow-field-hint">
-      In: {{ pins.inputs.length ? pins.inputs.join(', ') : 'none (add an Input node inside)' }}
+      In: {{ inputs.length ? inputs.join(', ') : 'none (add an Input node inside)' }}
     </p>
     <p class="flow-field-hint">
       Out: {{ outputs.length ? outputs.join(', ') : 'none (add an Output node inside)' }}
     </p>
     <p class="flow-field-hint">
       Each Input and Output node inside is a pin, named by its ID, top to bottom. The topmost Output is the
-      first output; others get pins of their own.
+      first output; others get pins of their own.<template v-if="isLoop"> The Input called {{ LOOP_ITEM }} puts out
+      each run's row; other Inputs, the same table every run. Each output gathers every run's, with its _key and
+      _iteration first.</template>
     </p>
   </div>
 
@@ -80,7 +87,7 @@ const ids = { graph: `${uid}-graph`, share: `${uid}-share`, note: `${uid}-note` 
       changes every use, and each one goes stale.
     </p>
     <template v-else>
-      <p :id="ids.note" class="flow-field-hint">Share it to use the same graph in other subnet nodes.</p>
+      <p :id="ids.note" class="flow-field-hint">Share it to use the same graph in other Subnet and Loop nodes.</p>
       <div class="flow-field-row">
         <input
           :id="ids.share"

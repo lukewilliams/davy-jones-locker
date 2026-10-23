@@ -40,7 +40,7 @@ and its image starts from the framework's ([Dockerfile](Dockerfile)), adding
 that entry point:
 
 ```dockerfile
-FROM ghcr.io/lukewilliams/davy-jones-locker-engine:0.3.1
+FROM ghcr.io/lukewilliams/davy-jones-locker-engine:0.3.2
 COPY main.py ./
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "3000"]
 ```
@@ -55,7 +55,7 @@ published to GitHub's container registry for each release, from 0.2.0, for
 | `ghcr.io/lukewilliams/davy-jones-locker-runner` | [runner/Dockerfile](runner/Dockerfile) |
 | `ghcr.io/lukewilliams/davy-jones-locker-node-worker` | [nodeworker/Dockerfile](nodeworker/Dockerfile) |
 
-Each is tagged with the version (`0.3.1`) and its minor (`0.3`); there's no
+Each is tagged with the version (`0.3.2`) and its minor (`0.3`); there's no
 `latest`, so an app says which version it builds on. Or build them yourself
 from this folder (`docker build -t davy-jones-locker-engine .`, and `-f
 runner/Dockerfile` or `-f nodeworker/Dockerfile` for the others), as
@@ -87,6 +87,16 @@ reports, default `engine`). `SANDBOX_HOSTS` names more hosts whose requests
 the engine refuses (see Safeguards). `RUNNER_PACKAGES_FILE` names an app's
 own runner `requirements.in` inside the engine's image, when its runner adds
 libraries (see Python and geometry); the assistant reads it.
+`LOOP_MAX_CONCURRENCY` (4) caps a Loop's runs at once whatever its node asks,
+`JOBS_AT_ONCE` (4) the jobs running at once, and `JOB_KEEP_SECONDS` (3600)
+how long a finished job's result is kept.
+
+**Jobs** (`/jobs`) are kept in the engine's memory: an engine restarted
+while a job runs loses it (the browser's Loop then fails, saying the engine
+couldn't be reached or has no such job), and a finished job's result goes
+after `JOB_KEEP_SECONDS`. A graph job's run is recorded in `runs`, as
+`/execute`'s are (trigger `job`); a Loop job's isn't. There's no sign-in yet,
+so anyone who can reach the engine can read or cancel any job by its ID.
 
 ## API
 
@@ -99,6 +109,12 @@ libraries (see Python and geometry); the assistant reads it.
 | `POST /run/node` | form data: `kind`, `node` (JSON, its data), `inputs` (JSON: `[{ ref, id, slot, pin, part }]` or with `tables: [{ name, part }]`), an `input` file per table (Parquet, its filename the part), and a `file` per file field's file (its filename the stored key). Checked here, run by the node worker. Answers with form data: `result` (JSON: `{ output, value?, error?, outputs: [{ slot, part } or { slot, tables: [{ name, part }] }] }`) and a `table` file per table |
 | `POST /execute` | JSON `{ document, targets? }`: runs a graph given in full |
 | `POST /graphs/{id}/execute` | JSON `{ targets? }` (optional): runs a saved graph |
+| `POST /jobs` | starts a job, a run longer than a request (below). Form data runs one Loop node: `job` (JSON `{ node, path?, subnets? }`: its data, its graph inline or named in `subnets`, the document's shared subnets) and an `input` file per pin (Parquet, its filename the pin's name, `item` for items). JSON runs a graph: `{ document \| graphId, targets? }`. Answers 202 with the job; 429 when `JOBS_AT_ONCE` are running |
+| `GET /jobs/{id}` | `{ id, kind, status, progress, started, finished, error?, warnings? (a Loop's), result? (a graph's, once done) }`: `status` is running, completed, failed or cancelled; `progress` `{ done, total, failed }` (a graph's names the Loop: `node`) |
+| `GET /jobs/{id}/result` | a finished Loop's tables, as `/run/node` answers: `result` (JSON `{ warnings, failed, cancelled, outputs: [{ slot, part }] }`, slot null for its first, then its other Outputs and `status`) and a `table` per output; a graph's result as JSON, as `/execute` answers. 409 while it runs |
+| `GET /commands` | `{ commands: [{ name, kind, description, type, secret, set, values?, value? }] }`: the Terminal's `b.` commands, for completion (`set`: whether a command set it, over `.env`; a secret's `value` only whether it has one) |
+| `POST /commands` | JSON `{ name, value? }`: sets a setting, prints it (no `value`), or runs an action. Answers `{ message }`. 403 unless `IS_LOCAL` |
+| `DELETE /jobs/{id}` | cancels it: it stops before its next node, or its next run of a Loop (one already running finishes) |
 | `GET /graphs`, `GET /graphs/{id}`, `PUT /graphs/{id}` | saved graphs; `PUT` takes `{ name, document }` and answers `{ id, version }` |
 | `PUT /files/{key}` | stores data a DataIngest node read (Parquet), for server runs |
 | `POST /assist` | JSON `{ kind, request, code, inputs }`: the AI assistant writes a node's code. Answers `{ code, note, model }` (see below) |
@@ -130,6 +146,7 @@ Runs are recorded in `runs` when there's a database. On the server:
 | DataExport | to CSV, TSV, JSON (geometry as WKT, as in the browser) or Parquet (GeoParquet), returned in the result. The geo formats are written in the browser only, for now. Its CSV quotes every field (pyarrow's writer), which the browser's doesn't |
 | The app's own | by the node worker; a file field's file comes from the stored files (`PUT /files/{key}`) |
 | Subnet | its graph (inline, or shared from the document's `subnets`), run as it is: what's wired into its pins is put out by its Input nodes, and its Output nodes are its outputs, the topmost first. Errors name where they started (`Screening › Classify: …`); 8 levels deep at most. As in the browser (SEAMONSTER's README, "Subnets") |
+| Loop | its graph once per row of what's wired into `item`, each run in a locked-down DuckDB of its own, up to `loopConcurrency` at once (at most `LOOP_MAX_CONCURRENCY`, 4 by default). Each Output gathered across the runs by column name, `_key` and `_iteration` first, and `status` a row per run. As in the browser (SEAMONSTER's README, "Loops") |
 | JavaScript | refused: browser only until the engine has safeguards for it |
 | anything else | can't run on the server yet |
 
@@ -241,6 +258,48 @@ def buffer(ctx):
   Otherwise `network=True` is refused: a deployed worker has no way out until
   sign-in and roadmap step 10e, which gives one through a proxy to hosts the
   engine's settings allow.
+
+## The Terminal's b. commands
+
+The browser's Terminal runs `b.` commands here ([commands.py](davy_jones_locker/commands.py)):
+
+| Command | |
+|---|---|
+| `b.LiteLLMURL` | the LiteLLM server, over `LITELLM_BASE_URL` |
+| `b.LiteLLMKey` | its key, over `LITELLM_API_KEY` (secret) |
+| `b.Assistant.Model` | the model, over `ASSIST_MODEL` |
+| `b.Assistant.Enabled` | whether the assistant is on (true by default) |
+| `b.Settings.Reset` | forgets every setting set by command |
+
+- **Kept in memory,** over `.env`, for everyone using the engine until it
+  restarts (the browser sends what it set again then).
+- **Local development only:** with no sign-in yet, `POST /commands` is
+  refused unless `IS_LOCAL` is true. Requests from the runner and the node
+  worker are refused like every other.
+- **The `.env` key goes only to the `.env` address:** once `b.LiteLLMURL` is
+  set by command, the assistant has no key until `b.LiteLLMKey` is set too,
+  and a new `b.LiteLLMURL` drops a key set for the last one. So nobody can
+  send the engine's key to an address they typed.
+- **Secrets never leave:** `GET /commands` and printing a secret say only
+  whether it's set, and the engine logs no values.
+
+An app adds its own with `create_app(commands=[...])`:
+
+```python
+from davy_jones_locker import create_app
+from davy_jones_locker.commands import Command
+
+region = {"value": "east"}
+app = create_app(commands=[
+    Command("App.Region", "setting", "Where the app looks.", values=["east", "west"],
+            get=lambda: region["value"], set=lambda v: region.update(value=v)),
+])
+```
+
+A `Command` has `name` (without `b.`), `kind` ('setting' or 'action'),
+`description`, and `type` ('string', 'number', 'boolean'), `secret`,
+`values`, `get`/`set` (a setting) or `run` (an action), which return what
+to print or raise `CommandError`.
 
 ## AI assistant
 
@@ -405,7 +464,7 @@ that work with the framework's pandas and pyarrow), compile it with hashes
 as the framework's is, and install it in an image built on the runner's:
 
 ```dockerfile
-FROM ghcr.io/lukewilliams/davy-jones-locker-runner:0.3.1
+FROM ghcr.io/lukewilliams/davy-jones-locker-runner:0.3.2
 USER root
 COPY runner/requirements.txt /tmp/app-requirements.txt
 RUN pip install --no-cache-dir --require-hashes -r /tmp/app-requirements.txt && rm /tmp/app-requirements.txt

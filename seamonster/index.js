@@ -15,7 +15,9 @@ export { FLOW_GRAPH } from './lib/flowGraph.js'
 // The panels, also their own entry (seamonster/panels) for hosts without the editor.
 export * from './widgets/panels/index.js'
 export { defineNodeCategory, defineNodeKind, NODE_CATEGORIES, NODE_KINDS } from './lib/nodeKinds.js'
-export { defineTheme, resolveTheme, themeNames } from './lib/themes.js'
+export { defineTheme, hasTheme, resolveTheme, themeNames } from './lib/themes.js'
+// The Terminal's commands (FlowgraphEditor's `terminalCommands`).
+export { createCommandRegistry, listing, MASK, parseCommand } from './lib/commands.js'
 
 // Last, so its rules come after Vue Flow's and the components' own in
 // style.css, and win over them.
