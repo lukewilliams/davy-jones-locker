@@ -17,14 +17,16 @@ engine, for:
   them from the engine, and the node worker runs them.
 - **Whole graphs on the server**, for schedulers (n8n, say) to trigger.
 
-There's no sign-in yet (identity is the next part), so the engine starts
-only for local development: `IS_LOCAL=true` (compose's `.env`, or the
-environment). Then it signs no one in, and the app's node kinds can reach the
-network; it logs a warning saying so, `/health` reports `local: true`, and
-the app shows LOCAL. Anyone who can reach it can use it, its AI assistant
-included (and so its LiteLLM key's budget): keep it on your own machine.
-Without `IS_LOCAL=true` it counts as deployed, which requires sign-in, so it
-refuses to start until sign-in exists.
+A deployed engine signs users in, through a provider the app chooses (OIDC,
+or a proxy's headers: see [Sign-in](#sign-in)), and serves only those
+`ALLOWED_USERS` names. For local development, `IS_LOCAL=true` (compose's
+`.env`, or the environment): then the app's node kinds can reach the network,
+and the engine may sign no one in (`IDENTITY=none`, the default there); it
+logs a warning saying so, `/health` reports `local: true`, and the app shows
+LOCAL. Without sign-in, anyone who can reach the engine can use it, its AI
+assistant included (and so its LiteLLM key's budget): keep it on your own
+machine. Without `IS_LOCAL=true` it counts as deployed, and refuses to start
+without sign-in.
 
 ## An app's engine
 
@@ -40,7 +42,7 @@ and its image starts from the framework's ([Dockerfile](Dockerfile)), adding
 that entry point:
 
 ```dockerfile
-FROM ghcr.io/lukewilliams/davy-jones-locker-engine:0.3.2
+FROM ghcr.io/lukewilliams/davy-jones-locker-engine:0.4.0
 COPY main.py ./
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "3000"]
 ```
@@ -55,7 +57,7 @@ published to GitHub's container registry for each release, from 0.2.0, for
 | `ghcr.io/lukewilliams/davy-jones-locker-runner` | [runner/Dockerfile](runner/Dockerfile) |
 | `ghcr.io/lukewilliams/davy-jones-locker-node-worker` | [nodeworker/Dockerfile](nodeworker/Dockerfile) |
 
-Each is tagged with the version (`0.3.2`) and its minor (`0.3`); there's no
+Each is tagged with the version (`0.4.0`) and its minor (`0.4`); there's no
 `latest`, so an app says which version it builds on. Or build them yourself
 from this folder (`docker build -t davy-jones-locker-engine .`, and `-f
 runner/Dockerfile` or `-f nodeworker/Dockerfile` for the others), as
@@ -89,20 +91,146 @@ own runner `requirements.in` inside the engine's image, when its runner adds
 libraries (see Python and geometry); the assistant reads it.
 `LOOP_MAX_CONCURRENCY` (4) caps a Loop's runs at once whatever its node asks,
 `JOBS_AT_ONCE` (4) the jobs running at once, and `JOB_KEEP_SECONDS` (3600)
-how long a finished job's result is kept.
+how long a finished job's result is kept. Sign-in's settings are in
+[Sign-in](#sign-in).
 
 **Jobs** (`/jobs`) are kept in the engine's memory: an engine restarted
 while a job runs loses it (the browser's Loop then fails, saying the engine
 couldn't be reached or has no such job), and a finished job's result goes
 after `JOB_KEEP_SECONDS`. A graph job's run is recorded in `runs`, as
-`/execute`'s are (trigger `job`); a Loop job's isn't. There's no sign-in yet,
-so anyone who can reach the engine can read or cancel any job by its ID.
+`/execute`'s are (trigger `job`); a Loop job's isn't. A job is its
+starter's: with sign-in, anyone else asking for it by its ID is told there's
+no such job.
+
+## Sign-in
+
+[identity.py](davy_jones_locker/identity.py). `IDENTITY` in `.env` picks the
+provider, and the framework knows nothing of any particular one:
+
+| `IDENTITY` | |
+|---|---|
+| `none` | local development only (`IS_LOCAL=true`, where it's the default): everyone is the same local user |
+| `oidc` | OpenID Connect: authorisation code with PKCE, the engine a confidential client. Hosted providers and self-hosted ones alike |
+| `header` | a proxy in front signs users in and says who they are in headers |
+
+An app can bring its own instead: a subclass of `Identity`, passed to
+`create_app(identity=...)` (below).
+
+**Who may use it.** `ALLOWED_USERS` (required with sign-in): email patterns
+(`*@example.com`, or one address; case doesn't matter) and groups
+(`group:<id>`), comma-separated. It's checked on every request, whatever the
+provider: someone signed in but not named is refused (403) and gets no
+session.
+
+**Every endpoint needs a user** but `/health` and `/auth/*`: 401 without one
+("You're not signed in to the engine..."). `/health` without one answers only
+`{ status, signIn, user: null }`. A user is a stable ID (the issuer and
+subject, never the email), with email, name and groups.
+
+**Requests that change things** (every method but GET, HEAD and OPTIONS)
+also need the `X-Requested-By` header, any value, whatever the provider and
+in local development too. The app shell sends it. A page on another site
+can make the browser send a request with the user's cookie, but not with
+that header without the engine's agreement, which it never gives (there's
+no CORS), so a site the user visits can't act for them.
+
+**OIDC** (`IDENTITY=oidc`):
+
+| | |
+|---|---|
+| `OIDC_DISCOVERY_URL` | the provider's `.well-known/openid-configuration`. Its issuer must be one: a URL for "any tenant" won't match the tokens' issuer |
+| `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | the engine's client there, registered with `PUBLIC_URL/auth/callback` as its redirect address |
+| `PUBLIC_URL` | where browsers reach the engine, with its path: the app's origin plus `/engines/<service>` |
+| `SECRET_KEY` | 32 or more random characters: encrypts the session cookie and each user's saved settings. Changing it signs everyone out and loses saved settings |
+| `SESSION_HOURS` | how long a sign-in lasts (8) |
+| `OIDC_SCOPES` | `openid email profile` |
+| `OIDC_EMAIL_CLAIM` | the claim `ALLOWED_USERS` matches; empty: `email`, else `preferred_username`. An `email` the provider says isn't verified is refused |
+| `OIDC_GROUPS_CLAIM` | the claim with the user's groups (`groups`) |
+
+`GET /auth/login?next=/path` sends the browser to the provider with a state,
+a nonce and a PKCE challenge, kept for 10 minutes in an encrypted cookie.
+`GET /auth/callback` exchanges the code (the client secret in the
+Authorization header, or the form when the provider takes only that), checks
+the ID token's signature against the provider's published keys (RS256 or
+ES256), then its issuer, audience, expiry and nonce, applies `ALLOWED_USERS`,
+and sets the session: an encrypted cookie (`djl_session`), httpOnly, SameSite
+Lax, Secure when `PUBLIC_URL` is https, its path `PUBLIC_URL`'s. No token
+reaches the page, and nothing goes in localStorage. `next` is only ever a
+path on the app's own site. `GET /auth/logout` forgets the session and sends
+the browser to the provider's end-session endpoint, when it has one. Outside
+local development, the discovery document, `PUBLIC_URL` and the provider's
+endpoints must be https.
+
+**Trusted headers** (`IDENTITY=header`): a proxy signs users in and sets
+`IDENTITY_HEADER_USER` (`X-Forwarded-User`), `IDENTITY_HEADER_EMAIL`
+(`X-Forwarded-Email`), `IDENTITY_HEADER_NAME`
+(`X-Forwarded-Preferred-Username`) and `IDENTITY_HEADER_GROUPS`
+(`X-Forwarded-Groups`, comma-separated) on every request. It must replace
+any the browser sent. The engine believes them only from a request carrying
+`IDENTITY_SECRET` in `IDENTITY_SECRET_HEADER` (`X-Identity-Secret`), or from
+`IDENTITY_TRUSTED_PROXIES` (addresses or networks), or both; one is required.
+`/auth/login` returns to the app once the headers are there, and
+`/auth/logout` goes to `IDENTITY_LOGOUT_URL`, the proxy's own sign-out.
+
+**What's kept per user:** settings set by `b.` commands (saved in the
+database, encrypted; see The Terminal's b. commands), jobs, and who started
+each recorded run (`runs.user_id`).
+
+**An app's own provider:**
+
+```python
+from davy_jones_locker import create_app
+from davy_jones_locker.identity import Identity, User
+
+class Staff(Identity):
+    name = "staff"
+
+    def authenticate(self, request):          # who the request is from, or None
+        ...
+        return User(id="staff|1234", email="ann@example.com", name="Ann")
+
+    async def login(self, request, next):     # start signing in; come back to `next`
+        ...
+
+    async def logout(self, request):
+        ...
+
+app = create_app(identity=Staff())
+```
+
+`callback(request)` is there for a provider that needs one
+(`/auth/callback`), and `check()` returns what's wrong with its settings at
+startup. `identity.seal` and `unseal` encrypt a value with `SECRET_KEY`, as
+the OIDC provider's cookies do.
+
+**Signing in on your own machine:** engine-shared's `identity-mock` is an
+OIDC provider that signs in whoever you say you are (its README). Start it
+with `--profile identity` and set, beside `IS_LOCAL=true`:
+`IDENTITY=oidc`, `ALLOWED_USERS`, `PUBLIC_URL` (the app's address on this
+machine plus `/engines/<service>`), `SECRET_KEY`,
+`OIDC_DISCOVERY_URL=http://identity-mock:3000/.well-known/openid-configuration`,
+`OIDC_CLIENT_ID=engine-dev` and `OIDC_CLIENT_SECRET=engine-dev-secret`.
+
+**Known limits:**
+- A session can't be ended early from the engine: the cookie holds it, so
+  signing out forgets it in that browser only, and a copied cookie works
+  until `SESSION_HOURS` pass (or `SECRET_KEY` changes, which ends everyone's).
+- Only the groups `ALLOWED_USERS` names are kept in the OIDC session, to
+  keep the cookie small.
+- Machines (n8n's scheduled runs of `/graphs/{id}/execute`) have no way to
+  sign in yet: with sign-in on, they're refused like anyone else.
+- Saved settings are read once per user per engine process: with more than
+  one engine replica, one doesn't see a setting changed through another
+  until it restarts. (Jobs are per process already.)
 
 ## API
 
 | | |
 |---|---|
-| `GET /health` | `{ status: 'ok', host, port, assistant, nodes }`: the app's connection check (`assistant`: `{ model, sampleRows }`, or null when it isn't set up; `nodes`: the app's node kinds' names) |
+| `GET /health` | `{ status: 'ok', host, port, local, assistant, nodes, signIn, user }`: the app's connection check (`assistant`: `{ model, sampleRows }`, or null when it isn't set up; `nodes`: the app's node kinds' names; `signIn`: the provider's name, null when the engine signs no one in; `user`: `{ email, name }`). Without a user, only `{ status, signIn, user: null }` |
+| `GET /auth/login?next=` | signs in (see Sign-in), then back to `next`, a path on the app's site |
+| `GET /auth/callback` | where the sign-in provider sends the browser back (OIDC) |
+| `GET /auth/logout` | signs out |
 | `GET /nodes` | `{ categories, kinds }`: the app's node kinds and categories, as the browser defines them (below) |
 | `POST /query` | form data: `sql`, and an `input` file per input (Parquet, its filename the reference name: `sqlnode1_data`, or `dataingest1_data.sheet1` for one table of several). Answers with the result as Parquet |
 | `POST /run/python` | form data: `code`, and `input` files as above. Answers with form data: `result` (JSON) and `table` (Parquet) when the last expression was a table |
@@ -113,11 +241,15 @@ so anyone who can reach the engine can read or cancel any job by its ID.
 | `GET /jobs/{id}` | `{ id, kind, status, progress, started, finished, error?, warnings? (a Loop's), result? (a graph's, once done) }`: `status` is running, completed, failed or cancelled; `progress` `{ done, total, failed }` (a graph's names the Loop: `node`) |
 | `GET /jobs/{id}/result` | a finished Loop's tables, as `/run/node` answers: `result` (JSON `{ warnings, failed, cancelled, outputs: [{ slot, part }] }`, slot null for its first, then its other Outputs and `status`) and a `table` per output; a graph's result as JSON, as `/execute` answers. 409 while it runs |
 | `GET /commands` | `{ commands: [{ name, kind, description, type, secret, set, values?, value? }] }`: the Terminal's `b.` commands, for completion (`set`: whether a command set it, over `.env`; a secret's `value` only whether it has one) |
-| `POST /commands` | JSON `{ name, value? }`: sets a setting, prints it (no `value`), or runs an action. Answers `{ message }`. 403 unless `IS_LOCAL` |
+| `POST /commands` | JSON `{ name, value? }`: sets a setting, prints it (no `value`), or runs an action. Answers `{ message }` |
 | `DELETE /jobs/{id}` | cancels it: it stops before its next node, or its next run of a Loop (one already running finishes) |
 | `GET /graphs`, `GET /graphs/{id}`, `PUT /graphs/{id}` | saved graphs; `PUT` takes `{ name, document }` and answers `{ id, version }` |
 | `PUT /files/{key}` | stores data a DataIngest node read (Parquet), for server runs |
 | `POST /assist` | JSON `{ kind, request, code, inputs }`: the AI assistant writes a node's code. Answers `{ code, note, model }` (see below) |
+
+Every endpoint but `/health` and `/auth/*` needs a signed-in user (401, or
+403 for someone `ALLOWED_USERS` doesn't name), and every request that changes
+things the `X-Requested-By` header (403): see Sign-in.
 
 Errors are JSON `{ error }`, their message meant for the user. `/run/python`'s
 `result` is `{ output, value, variables }` or `{ output, error }`:
@@ -271,11 +403,16 @@ The browser's Terminal runs `b.` commands here ([commands.py](davy_jones_locker/
 | `b.Assistant.Enabled` | whether the assistant is on (true by default) |
 | `b.Settings.Reset` | forgets every setting set by command |
 
-- **Kept in memory,** over `.env`, for everyone using the engine until it
-  restarts (the browser sends what it set again then).
-- **Local development only:** with no sign-in yet, `POST /commands` is
-  refused unless `IS_LOCAL` is true. Requests from the runner and the node
-  worker are refused like every other.
+- **Signed in, each user's own:** a setting applies over `.env` to the
+  requests of the user who set it, and is saved in the database
+  (`user_settings`, encrypted with `SECRET_KEY`), so it outlasts restarts.
+  Without the database, setting one is refused (`.env`'s apply).
+  `b.Settings.Reset` forgets only yours.
+- **Signing no one in (local development):** kept in memory, over `.env`,
+  for everyone using the engine until it restarts (the browser sends what it
+  set again then).
+- Requests from the runner and the node worker are refused like every other,
+  and a command needs `X-Requested-By` like any other change.
 - **The `.env` key goes only to the `.env` address:** once `b.LiteLLMURL` is
   set by command, the assistant has no key until `b.LiteLLMKey` is set too,
   and a new `b.LiteLLMURL` drops a key set for the last one. So nobody can
@@ -299,7 +436,9 @@ app = create_app(commands=[
 A `Command` has `name` (without `b.`), `kind` ('setting' or 'action'),
 `description`, and `type` ('string', 'number', 'boolean'), `secret`,
 `values`, `get`/`set` (a setting) or `run` (an action), which return what
-to print or raise `CommandError`.
+to print or raise `CommandError`. A setting kept per user, as the built-ins
+are, keeps its value in `commands.user_settings()` (a dict: the signed-in
+user's, saved after each command, or everyone's without sign-in) instead.
 
 ## AI assistant
 
@@ -337,7 +476,8 @@ the container, that's `host.docker.internal`, which needs
 
 The engine owns its tables, in schema `FLOW_SCHEMA` (`flow`), created the
 first time the database answers ([database.py](davy_jones_locker/database.py)):
-`graphs`, `files` (stored data by key), `runs`. Without `DATABASE_URL`, or
+`graphs`, `files` (stored data by key), `runs` (with the user who started
+each), `user_settings` (each user's `b.` settings, encrypted). Without `DATABASE_URL`, or
 while the database can't be reached, those endpoints answer 503 and graph runs
 aren't recorded; everything else still works, and the engine starts either
 way.
@@ -353,6 +493,11 @@ on any Postgres.
 
 User code runs in two places here, and neither is trusted. The app's own
 node kinds run in a third, trusted, but handling what users send.
+
+**Signing in.** Every endpoint but `/health` and `/auth/*` needs a user
+`ALLOWED_USERS` names, and every change `X-Requested-By`, so other sites
+can't act for a user (see Sign-in). Sessions are encrypted cookies the page
+can't read; no token reaches the browser.
 
 **Refusing the sandboxes.** Every request from the runner or the node worker
 is refused (403), whatever it asks: code runs there, and nothing it does may
@@ -464,7 +609,7 @@ that work with the framework's pandas and pyarrow), compile it with hashes
 as the framework's is, and install it in an image built on the runner's:
 
 ```dockerfile
-FROM ghcr.io/lukewilliams/davy-jones-locker-runner:0.3.2
+FROM ghcr.io/lukewilliams/davy-jones-locker-runner:0.4.0
 USER root
 COPY runner/requirements.txt /tmp/app-requirements.txt
 RUN pip install --no-cache-dir --require-hashes -r /tmp/app-requirements.txt && rm /tmp/app-requirements.txt
@@ -479,7 +624,8 @@ import. Checked with geopandas 1.2.0, shapely 2.1.2 and pyproj 3.8.0.
 
 ```
 davy_jones_locker/
-  main.py        the API, create_app, refusing the sandboxes
+  main.py        the API, create_app, requiring a user, refusing the sandboxes
+  identity.py    sign-in: the providers (none, OIDC, trusted headers), ALLOWED_USERS
   settings.py    environment settings (.env.example)
   nodes/         the app's node kinds: NodeKind, Field, Rule, NodeCategory, NodeError
     context.py   what a handler is given (ctx), for the worker and for tests

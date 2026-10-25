@@ -43,12 +43,18 @@ vulnerability:
 
 These are documented, and reports of them alone aren't needed:
 
-- **The engine has no sign-in yet**, so it starts only for local
-  development (`IS_LOCAL=true`). Then anyone who can reach it can use it,
-  including its AI assistant's budget, and the app's node kinds can reach
-  the network. Keep it on your own machine, never on the internet or a
-  network others use, until sign-in exists. (The engine refuses requests
-  from its own sandboxes either way.)
+- **Local development signs no one in.** With `IS_LOCAL=true` and no
+  `IDENTITY`, anyone who can reach the engine can use it, including its AI
+  assistant's budget, and the app's node kinds can reach the network. Keep
+  such an engine on your own machine, never on the internet or a network
+  others use. A deployed engine requires sign-in. (The engine refuses
+  requests from its own sandboxes either way.)
+- **Sessions last their full length.** The session is an encrypted cookie:
+  signing out ends it in that browser, but a copied cookie works until
+  `SESSION_HOURS` pass or `SECRET_KEY` changes.
+- **The trusted-header provider trusts its proxy.** With `IDENTITY=header`,
+  the proxy must replace any identity headers the browser sends; the engine
+  checks only the proxy's secret or address.
 - **The doc widget doesn't sanitise markdown.** It renders HTML as given;
   sanitise documents that come from sources you don't control (see
   `seamonster/widgets/doc/README.md`).

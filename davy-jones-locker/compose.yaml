@@ -13,14 +13,13 @@
 # engine, and opens the node worker's way out (the `outside-true` network),
 # so the app's node kinds can reach the network. Exactly `true` or `false`:
 # compose refuses anything else ("undefined network outside-..."). Without
-# it, the engine counts as deployed, which requires sign-in, which it doesn't
-# have yet: it refuses to start. So until then, never run it anywhere but a
-# developer's machine.
+# it, the engine counts as deployed, and starts only with sign-in (IDENTITY
+# and its settings in engine/.env; the engine README, "Sign-in").
 #
 # This builds the images from engine/. They're published too, for each
 # release (ghcr.io/lukewilliams/davy-jones-locker-engine, -runner and
 # -node-worker, tagged with the version): replace a `build:` with
-# `image: ghcr.io/lukewilliams/davy-jones-locker-runner:0.3.2`, say, and
+# `image: ghcr.io/lukewilliams/davy-jones-locker-runner:0.4.0`, say, and
 # build the app's own engine FROM the engine's.
 #
 # The node worker runs the app's own node kinds (engine/davy_jones_locker/nodes/):

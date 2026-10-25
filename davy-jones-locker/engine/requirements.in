@@ -6,3 +6,6 @@ duckdb==1.5.5
 pyarrow==25.0.1
 psycopg[binary]==3.3.6
 httpx==0.28.1
+# Sign-in: checking ID tokens' signatures, and the session cookie and per-user
+# settings, encrypted.
+cryptography==50.0.2

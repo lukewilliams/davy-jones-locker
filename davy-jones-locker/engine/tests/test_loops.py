@@ -149,7 +149,7 @@ def test_a_loop_needs_an_item_input():
 def client(monkeypatch):
     monkeypatch.setattr(settings, "IS_LOCAL", True)
     monkeypatch.setattr(settings, "DATABASE_URL", "")
-    with TestClient(main.create_app()) as client:
+    with TestClient(main.create_app(), headers={"X-Requested-By": "test"}) as client:
         yield client
 
 

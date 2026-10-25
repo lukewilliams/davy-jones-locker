@@ -9,7 +9,8 @@ Two kinds:
 
 Jobs are kept in this process's memory: an engine restarted while one runs
 loses it, and a finished job's result is kept for JOB_KEEP_SECONDS. At most
-JOBS_AT_ONCE run at once; more are refused (Busy).
+JOBS_AT_ONCE run at once; more are refused (Busy). A job is its starter's:
+with sign-in, no one else can read or cancel it (main.py).
 """
 
 import secrets
@@ -30,6 +31,7 @@ class Busy(Exception):
 class Job:
     id: str
     kind: str
+    owner: str | None = None  # the user ID that started it
     status: str = "running"  # running, completed, failed, cancelled
     progress: dict = field(default_factory=dict)
     result: dict | None = None
@@ -65,7 +67,7 @@ def _forget_old() -> None:
             del _jobs[job_id]
 
 
-def start(kind: str, work: Callable[[Job], dict]) -> Job:
+def start(kind: str, work: Callable[[Job], dict], owner: str | None = None) -> Job:
     """Run `work(job)` on a thread of its own. It returns the job's result,
     reports progress through `job.progress`, and checks `job.cancel`; an
     exception fails the job, its message the job's error."""
@@ -73,7 +75,7 @@ def start(kind: str, work: Callable[[Job], dict]) -> Job:
         _forget_old()
         if sum(1 for j in _jobs.values() if j.status == "running") >= settings.JOBS_AT_ONCE:
             raise Busy(f"The engine is running {settings.JOBS_AT_ONCE} jobs already: try again when one has finished.")
-        job = Job(id=secrets.token_hex(8), kind=kind)
+        job = Job(id=secrets.token_hex(8), kind=kind, owner=owner)
         _jobs[job.id] = job
 
     def run() -> None:

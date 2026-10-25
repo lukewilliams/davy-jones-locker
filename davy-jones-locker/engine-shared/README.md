@@ -8,8 +8,9 @@ then point the engine's settings at those instead.
 | Service | What | On this machine |
 |---|---|---|
 | `postgres` | Postgres 18: the engine's database | `127.0.0.1:5432` (`POSTGRES_PORT`) |
+| `identity-mock` | an OpenID Connect provider that signs in whoever you say you are (the `identity` profile: only when asked for) | `127.0.0.1:9100` (`IDENTITY_MOCK_PORT`) |
 
-Coming here: easyauth-mock (identity), azurite (blob storage), perhaps n8n.
+Coming here: azurite (blob storage), perhaps n8n.
 
 ## Running it
 
@@ -44,6 +45,28 @@ run again, and against another Postgres: its header has the `psql` command.
 
 The engine reaches it as `postgres:5432` on the shared network; its
 `.env.example` already has both roles' URLs with these development passwords.
+
+## identity-mock
+
+For trying sign-in on your own machine ([identity-mock/server.py](identity-mock/server.py)):
+an OIDC provider whose sign-in page asks for an email, name and groups, and
+signs in whoever you say. Never anywhere else.
+
+```
+docker compose -f davy-jones-locker/engine-shared/compose.yaml --profile identity up -d --build --wait
+```
+
+It knows one client, `IDENTITY_MOCK_CLIENT_ID` and
+`IDENTITY_MOCK_CLIENT_SECRET` in `.env` (`engine-dev`, `engine-dev-secret`),
+and accepts any redirect address. Browsers reach it at
+`http://localhost:9100`, engines at `http://identity-mock:3000` on the shared
+network, so its discovery document gives the browser's endpoints at one and
+the engine's at the other. Set the engine's `.env` as its README says
+("Sign-in", "Signing in on your own machine"), with `IS_LOCAL=true`, which
+lets the engine reach a provider over plain http. Its signing key is new each
+time it starts, and codes are kept in memory: restarting it signs no one
+out (the engine's session cookie stands on its own), but a sign-in under way
+fails.
 
 ## Notes
 

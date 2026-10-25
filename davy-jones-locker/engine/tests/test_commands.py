@@ -21,7 +21,7 @@ def env(monkeypatch):
 
 @pytest.fixture
 def client():
-    with TestClient(main.create_app()) as client:
+    with TestClient(main.create_app(), headers={"X-Requested-By": "test"}) as client:
         yield client
 
 
@@ -85,17 +85,18 @@ def test_turning_the_assistant_off_and_resetting(client):
     assert assist.summary()["model"] == "env-model"
 
 
-def test_commands_need_local_development(client, monkeypatch):
-    monkeypatch.setattr(settings, "IS_LOCAL", False)
-    response = run(client, "b.Assistant.Model", value="x")
+def test_a_command_from_another_site_is_refused(client):
+    # A page elsewhere can post to the engine, but not with X-Requested-By.
+    response = client.post("/commands", json={"name": "b.Assistant.Model", "value": "x"}, headers={"X-Requested-By": ""})
     assert response.status_code == 403
+    assert commands.assist_model() == "env-model"
 
 
 def test_an_app_adds_its_own(client):
     seen = {}
     extra = commands.Command("App.Region", "setting", "Where.", values=["east", "west"],
                              get=lambda: seen.get("r", "east"), set=lambda v: seen.update(r=v))
-    with TestClient(main.create_app(commands=[extra])) as app_client:
+    with TestClient(main.create_app(commands=[extra]), headers={"X-Requested-By": "test"}) as app_client:
         assert run(app_client, "b.App.Region", value="north").json()["error"] == "b.App.Region takes one of east, west."
         assert run(app_client, "b.App.Region", value="west").json()["message"] == 'b.App.Region = "west"'
     commands.register([])

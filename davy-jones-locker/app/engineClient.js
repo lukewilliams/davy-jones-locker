@@ -28,6 +28,7 @@ import { reactive } from 'vue'
 //              again: f.Security.DisconnectBackend and EnableBackend
 //   hideAssistant(hidden)  the assistant left out of status in this browser
 //              (f.Assistant.Disable), whatever the engine says
+//   signOut    sends the window to the engine's sign-out (f.Security.SignOut)
 //
 // Inputs are [{ name, bytes }]: Parquet, named by reference name (or
 // name.table). The engine's README has the API.
@@ -37,8 +38,16 @@ import { reactive } from 'vue'
 // the dev server's index.html when there's no engine) means it's unavailable.
 // `assistant` is { model, sampleRows } when it has the AI assistant set up, and
 // `nodes` the names of the app's own node kinds (status.nodes follows it).
-// `local` is true for an engine in local development (IS_LOCAL): it signs no
-// one in, and the app's node kinds can reach the network (status.local).
+// `local` is true for an engine in local development (IS_LOCAL): the app's
+// node kinds can reach the network (status.local).
+//
+// Sign-in is the engine's (its identity.py): `signIn` in /health names its
+// provider (null when it signs no one in) and `user` is { email, name } once
+// signed in (status.signIn, status.user). Signed out, or when any request
+// answers 401, the window goes to the engine's sign-in page, which comes back
+// here; at most once a minute, so a sign-in that doesn't take can't loop.
+// Every request carries X-Requested-By, which the engine requires of requests
+// that change things (a page on another site can't send it).
 
 // How often a running job is asked how it's going.
 const JOB_POLL_MS = 1000
@@ -48,6 +57,10 @@ const UNAVAILABLE_INTERVAL_MS = 15000
 const TIMEOUT_MS = 3000
 
 const PARQUET = 'application/vnd.apache.parquet'
+
+const REQUEST_HEADERS = { 'x-requested-by': 'davy-jones-locker' }
+const SIGN_IN_KEY = 'davy-jones-locker:signing-in:'
+const SIGN_IN_AGAIN_MS = 60000
 
 function form(fields, inputs) {
   const body = new FormData()
@@ -66,8 +79,30 @@ export function createEngineClient({ url, name = 'The engine', disconnected = fa
     throw new Error(`${name} is disconnected in this browser (f.Security.DisconnectBackend): f.Security.EnableBackend connects it again.`)
   }
 
+  // To the engine's sign-in page, unless the window went there less than a
+  // minute ago (then it didn't take). Says whether it's going.
+  function signIn() {
+    let last = 0
+    try {
+      last = Number(sessionStorage.getItem(SIGN_IN_KEY + base)) || 0
+    } catch {}
+    if (Date.now() - last < SIGN_IN_AGAIN_MS) return false
+    try {
+      sessionStorage.setItem(SIGN_IN_KEY + base, String(Date.now()))
+    } catch {}
+    location.assign(`${base}/auth/login?next=${encodeURIComponent(location.pathname + location.search + location.hash)}`)
+    return true
+  }
+
   // The engine's errors are JSON { error }; anything else says what came back.
   async function failure(response) {
+    if (response.status === 401) {
+      return new Error(
+        signIn()
+          ? `${name} needs you to sign in again: going to sign-in.`
+          : `${name} needs you to sign in, and signing in didn't work just now: reload the page to try again.`,
+      )
+    }
     try {
       const { error } = await response.json()
       if (error) return new Error(error)
@@ -79,7 +114,7 @@ export function createEngineClient({ url, name = 'The engine', disconnected = fa
     if (off) refuse()
     let response
     try {
-      response = await fetch(`${base}${path}`, { method: 'POST', ...init })
+      response = await fetch(`${base}${path}`, { method: 'POST', ...init, headers: { ...REQUEST_HEADERS, ...init?.headers } })
     } catch {
       throw new Error(`${name} couldn't be reached.`)
     }
@@ -93,7 +128,7 @@ export function createEngineClient({ url, name = 'The engine', disconnected = fa
     if (off) refuse()
     let response
     try {
-      response = await fetch(`${base}${path}`, { cache: 'no-store' })
+      response = await fetch(`${base}${path}`, { cache: 'no-store', headers: REQUEST_HEADERS })
     } catch {
       throw new Error(`${name} couldn't be reached.`)
     }
@@ -104,7 +139,10 @@ export function createEngineClient({ url, name = 'The engine', disconnected = fa
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
   const client = {
-    status: reactive({ state: off ? 'unavailable' : 'checking', address: null, local: false, assistant: null, nodes: [], disconnected: off }),
+    status: reactive({
+      state: off ? 'unavailable' : 'checking', address: null, local: false, assistant: null, nodes: [], disconnected: off,
+      signIn: null, user: null,
+    }),
 
     async query({ sql, inputs = [] }) {
       const response = await post('/query', { sql }, inputs)
@@ -206,6 +244,10 @@ export function createEngineClient({ url, name = 'The engine', disconnected = fa
       check()
     },
 
+    signOut() {
+      location.assign(`${base}/auth/logout`)
+    },
+
     hideAssistant(hidden) {
       hideAssistant = hidden
       client.status.assistant = hidden ? null : lastAssistant
@@ -214,7 +256,7 @@ export function createEngineClient({ url, name = 'The engine', disconnected = fa
     // { categories: [...], kinds: [...] }: definitions SEAMONSTER's
     // defineNodeCategory and defineNodeKind take.
     async nodes() {
-      const response = await fetch(`${base}/nodes`, { cache: 'no-store' })
+      const response = await fetch(`${base}/nodes`, { cache: 'no-store', headers: REQUEST_HEADERS })
       if (!response.ok) throw await failure(response)
       return response.json()
     },
@@ -237,11 +279,26 @@ export function createEngineClient({ url, name = 'The engine', disconnected = fa
     clearTimeout(timer)
     if (off) return
     try {
-      const response = await fetch(`${base}/health`, { cache: 'no-store', signal: AbortSignal.timeout(TIMEOUT_MS) })
+      const response = await fetch(`${base}/health`, {
+        cache: 'no-store', headers: REQUEST_HEADERS, signal: AbortSignal.timeout(TIMEOUT_MS),
+      })
       const json = response.ok && response.headers.get('content-type')?.includes('json')
       const body = json ? await response.json() : null
       if (body?.status !== 'ok') throw new Error('not the engine')
       if (off) return // disconnected while it checked
+      status.signIn = body.signIn ?? null
+      if (body.signIn && !body.user) {
+        // Reachable, but nothing works until signed in.
+        status.user = null
+        signIn()
+        throw new Error('not signed in')
+      }
+      if (JSON.stringify(body.user ?? null) !== JSON.stringify(status.user)) status.user = body.user ?? null
+      if (body.user) {
+        try {
+          sessionStorage.removeItem(SIGN_IN_KEY + base)
+        } catch {}
+      }
       status.state = 'connected'
       status.address = body.host && body.port ? `${body.host}:${body.port}` : location.host
       status.local = body.local === true

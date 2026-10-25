@@ -56,6 +56,22 @@ function b({ client: e, engineName: t, kept: n, chosenTheme: r, appCommands: i =
 			run: () => (o(), n.set("disconnected", null), e.connect(), `Connecting to ${t} again.`)
 		},
 		{
+			name: "f.Security.WhoAmI",
+			kind: "action",
+			description: "Says who you're signed in to the engine as.",
+			run: () => {
+				o();
+				let { state: n, signIn: r, user: i } = e.status;
+				return r && !i ? `You're not signed in to ${t}: reload the page to sign in.` : n === "connected" ? r ? `Signed in to ${t} as ${i.name ? `${i.name} (${i.email})` : i.email}.` : `${t} signs no one in: it's for local development.` : `${t} isn't connected, so it can't say.`;
+			}
+		},
+		{
+			name: "f.Security.SignOut",
+			kind: "action",
+			description: "Signs you out of the engine.",
+			run: () => (o(), e.status.signIn ? (e.signOut(), "Signing out.") : `${t} signs no one in, so there's nothing to sign out of.`)
+		},
+		{
 			name: "f.Assistant.Disable",
 			kind: "action",
 			description: "Hides the AI assistant in this browser.",
@@ -70,16 +86,16 @@ function b({ client: e, engineName: t, kept: n, chosenTheme: r, appCommands: i =
 	]), a.define(i), e ? x(a, e, t, n) : a.unavailable("b.", "b. commands run on the engine, and this app has none."), a;
 }
 function x(e, t, n, r) {
-	let i = [], a = () => r.get("engine-settings") ?? {};
-	function o() {
+	let i = [], a = () => r.get("engine-settings") ?? {}, o = () => !t.status.signIn;
+	function s() {
 		let e = a();
 		for (let t of Object.keys(e)) i.find((e) => e.name === t)?.set || delete e[t];
 		r.set("engine-settings", Object.keys(e).length ? e : null);
 	}
-	async function s() {
+	async function l() {
 		i = await t.commands();
 	}
-	function l() {
+	function u() {
 		e.remove("b."), e.define(i.map((e) => ({
 			name: e.name,
 			kind: e.kind,
@@ -90,89 +106,112 @@ function x(e, t, n, r) {
 			get: () => i.find((t) => t.name === e.name)?.value,
 			set: async (n) => {
 				let i = await t.runCommand(e.name, n);
-				return r.set("engine-settings", {
+				return o() && r.set("engine-settings", {
 					...a(),
 					[e.name]: n
-				}), await s(), o(), i;
+				}), await l(), s(), i;
 			},
 			run: async () => {
 				let n = await t.runCommand(e.name);
-				return await s(), o(), n;
+				return await l(), s(), n;
 			}
 		})));
 	}
-	async function u() {
+	async function d() {
 		try {
-			await s();
-			let n = Object.entries(a()).filter(([e]) => i.find((t) => t.name === e)?.set === !1);
-			for (let [e, r] of n) await t.runCommand(e, r).catch(() => {});
-			n.length && await s(), e.unavailable("b.", null), l();
+			if (await l(), o()) {
+				let e = Object.entries(a()).filter(([e]) => i.find((t) => t.name === e)?.set === !1);
+				for (let [n, r] of e) await t.runCommand(n, r).catch(() => {});
+				e.length && await l();
+			} else r.set("engine-settings", null);
+			e.unavailable("b.", null), u();
 		} catch {}
 	}
 	c(() => t.status.state, (r) => {
-		if (r === "connected") return u();
+		if (r === "connected") return d();
 		e.remove("b."), e.unavailable("b.", t.status.disconnected ? `b. commands run on ${n}, which is disconnected in this browser (f.Security.EnableBackend).` : `b. commands run on ${n}, which isn't available.`);
 	}, { immediate: !0 });
 }
-var S = (e) => typeof e == "string" && g(e) ? e : null, C = 1e3, w = 5e3, T = 15e3, E = 3e3, D = "application/vnd.apache.parquet";
-function O(e, t) {
+var S = (e) => typeof e == "string" && g(e) ? e : null, C = 1e3, w = 5e3, ee = 15e3, T = 3e3, E = "application/vnd.apache.parquet", D = { "x-requested-by": "davy-jones-locker" }, O = "davy-jones-locker:signing-in:", k = 6e4;
+function A(e, t) {
 	let n = new FormData();
 	for (let [t, r] of Object.entries(e)) n.append(t, r);
-	for (let { name: e, bytes: r } of t) n.append("input", new Blob([r], { type: D }), e);
+	for (let { name: e, bytes: r } of t) n.append("input", new Blob([r], { type: E }), e);
 	return n;
 }
-function k({ url: e, name: t = "The engine", disconnected: n = !1, assistantHidden: r = !1 }) {
+function j({ url: e, name: t = "The engine", disconnected: n = !1, assistantHidden: r = !1 }) {
 	let a = e.replace(/\/+$/, ""), o = n, s = r, c = null, l = () => {
 		throw Error(`${t} is disconnected in this browser (f.Security.DisconnectBackend): f.Security.EnableBackend connects it again.`);
 	};
-	async function u(e) {
+	function u() {
+		let e = 0;
+		try {
+			e = Number(sessionStorage.getItem(O + a)) || 0;
+		} catch {}
+		if (Date.now() - e < k) return !1;
+		try {
+			sessionStorage.setItem(O + a, String(Date.now()));
+		} catch {}
+		return location.assign(`${a}/auth/login?next=${encodeURIComponent(location.pathname + location.search + location.hash)}`), !0;
+	}
+	async function d(e) {
+		if (e.status === 401) return /* @__PURE__ */ Error(u() ? `${t} needs you to sign in again: going to sign-in.` : `${t} needs you to sign in, and signing in didn't work just now: reload the page to try again.`);
 		try {
 			let { error: t } = await e.json();
 			if (t) return Error(t);
 		} catch {}
 		return /* @__PURE__ */ Error(`${t} answered ${e.status} ${e.statusText}.`);
 	}
-	async function d(e, n) {
+	async function f(e, n) {
 		o && l();
 		let r;
 		try {
 			r = await fetch(`${a}${e}`, {
 				method: "POST",
-				...n
+				...n,
+				headers: {
+					...D,
+					...n?.headers
+				}
 			});
 		} catch {
 			throw Error(`${t} couldn't be reached.`);
 		}
-		if (!r.ok) throw await u(r);
+		if (!r.ok) throw await d(r);
 		return r;
 	}
-	let f = (e, t, n) => d(e, { body: O(t, n) });
-	async function p(e) {
+	let p = (e, t, n) => f(e, { body: A(t, n) });
+	async function m(e) {
 		o && l();
 		let n;
 		try {
-			n = await fetch(`${a}${e}`, { cache: "no-store" });
+			n = await fetch(`${a}${e}`, {
+				cache: "no-store",
+				headers: D
+			});
 		} catch {
 			throw Error(`${t} couldn't be reached.`);
 		}
-		if (!n.ok) throw await u(n);
+		if (!n.ok) throw await d(n);
 		return n;
 	}
-	let m = (e) => new Promise((t) => setTimeout(t, e)), h = {
+	let h = (e) => new Promise((t) => setTimeout(t, e)), g = {
 		status: i({
 			state: o ? "unavailable" : "checking",
 			address: null,
 			local: !1,
 			assistant: null,
 			nodes: [],
-			disconnected: o
+			disconnected: o,
+			signIn: null,
+			user: null
 		}),
 		async query({ sql: e, inputs: t = [] }) {
-			let n = await f("/query", { sql: e }, t);
+			let n = await p("/query", { sql: e }, t);
 			return new Uint8Array(await n.arrayBuffer());
 		},
 		async runPython({ code: e, inputs: t = [] }) {
-			let n = await (await f("/run/python", { code: e }, t)).formData(), r = JSON.parse(n.get("result")), i = n.get("table");
+			let n = await (await p("/run/python", { code: e }, t)).formData(), r = JSON.parse(n.get("result")), i = n.get("table");
 			return i ? {
 				...r,
 				table: new Uint8Array(await i.arrayBuffer())
@@ -188,11 +227,11 @@ function k({ url: e, name: t = "The engine", disconnected: n = !1, assistantHidd
 					id: r,
 					slot: a,
 					pin: o,
-					tables: e.tables.map((e, n) => (i.append("input", new Blob([e.bytes], { type: D }), `i${t}-${n}`), {
+					tables: e.tables.map((e, n) => (i.append("input", new Blob([e.bytes], { type: E }), `i${t}-${n}`), {
 						name: e.name,
 						part: `i${t}-${n}`
 					}))
-				} : (i.append("input", new Blob([e.bytes], { type: D }), `i${t}`), {
+				} : (i.append("input", new Blob([e.bytes], { type: E }), `i${t}`), {
 					ref: n,
 					id: r,
 					slot: a,
@@ -202,7 +241,7 @@ function k({ url: e, name: t = "The engine", disconnected: n = !1, assistantHidd
 			});
 			i.append("inputs", JSON.stringify(a));
 			for (let { key: e, bytes: t } of r) i.append("file", new Blob([t]), e);
-			let o = await (await d("/run/node", { body: i })).formData(), s = JSON.parse(o.get("result")), c = /* @__PURE__ */ new Map();
+			let o = await (await f("/run/node", { body: i })).formData(), s = JSON.parse(o.get("result")), c = /* @__PURE__ */ new Map();
 			for (let e of o.getAll("table")) c.set(e.name, new Uint8Array(await e.arrayBuffer()));
 			let l = (s.outputs ?? []).map((e) => e.tables ? {
 				slot: e.slot,
@@ -226,11 +265,11 @@ function k({ url: e, name: t = "The engine", disconnected: n = !1, assistantHidd
 				path: t,
 				subnets: n
 			}));
-			for (let { pin: e, bytes: t } of r) a.append("input", new Blob([t], { type: D }), e);
-			let o = await (await d("/jobs", { body: a })).json();
-			for (; o.status === "running";) await m(C), o = await (await p(`/jobs/${o.id}`)).json(), o.progress?.total && i(o.progress);
+			for (let { pin: e, bytes: t } of r) a.append("input", new Blob([t], { type: E }), e);
+			let o = await (await f("/jobs", { body: a })).json();
+			for (; o.status === "running";) await h(C), o = await (await m(`/jobs/${o.id}`)).json(), o.progress?.total && i(o.progress);
 			if (o.status === "failed") return { error: o.error };
-			let s = await (await p(`/jobs/${o.id}/result`)).formData(), c = JSON.parse(s.get("result")), l = /* @__PURE__ */ new Map();
+			let s = await (await m(`/jobs/${o.id}/result`)).formData(), c = JSON.parse(s.get("result")), l = /* @__PURE__ */ new Map();
 			for (let e of s.getAll("table")) l.set(e.name, new Uint8Array(await e.arrayBuffer()));
 			let u = (c.outputs ?? []).map((e) => ({
 				slot: e.slot,
@@ -242,20 +281,20 @@ function k({ url: e, name: t = "The engine", disconnected: n = !1, assistantHidd
 			};
 		},
 		async commands() {
-			return (await (await p("/commands")).json()).commands ?? [];
+			return (await (await m("/commands")).json()).commands ?? [];
 		},
 		async runCommand(e, ...t) {
 			let n = t.length ? {
 				name: e,
 				value: t[0]
 			} : { name: e };
-			return (await (await d("/commands", {
+			return (await (await f("/commands", {
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify(n)
 			})).json()).message;
 		},
 		disconnect() {
-			o = !0, clearTimeout(g), Object.assign(h.status, {
+			o = !0, clearTimeout(_), Object.assign(g.status, {
 				state: "unavailable",
 				address: null,
 				assistant: null,
@@ -263,36 +302,47 @@ function k({ url: e, name: t = "The engine", disconnected: n = !1, assistantHidd
 			});
 		},
 		connect() {
-			o && (o = !1, Object.assign(h.status, {
+			o && (o = !1, Object.assign(g.status, {
 				state: "checking",
 				disconnected: !1
-			}), _());
+			}), v());
+		},
+		signOut() {
+			location.assign(`${a}/auth/logout`);
 		},
 		hideAssistant(e) {
-			s = e, h.status.assistant = e ? null : c;
+			s = e, g.status.assistant = e ? null : c;
 		},
 		async nodes() {
-			let e = await fetch(`${a}/nodes`, { cache: "no-store" });
-			if (!e.ok) throw await u(e);
+			let e = await fetch(`${a}/nodes`, {
+				cache: "no-store",
+				headers: D
+			});
+			if (!e.ok) throw await d(e);
 			return e.json();
 		},
 		async assist(e) {
-			return (await d("/assist", {
+			return (await f("/assist", {
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify(e)
 			})).json();
 		}
-	}, g = null;
-	async function _() {
-		let { status: e } = h;
-		if (clearTimeout(g), !o) {
+	}, _ = null;
+	async function v() {
+		let { status: e } = g;
+		if (clearTimeout(_), !o) {
 			try {
 				let t = await fetch(`${a}/health`, {
 					cache: "no-store",
-					signal: AbortSignal.timeout(E)
+					headers: D,
+					signal: AbortSignal.timeout(T)
 				}), n = t.ok && t.headers.get("content-type")?.includes("json") ? await t.json() : null;
 				if (n?.status !== "ok") throw Error("not the engine");
 				if (o) return;
+				if (e.signIn = n.signIn ?? null, n.signIn && !n.user) throw e.user = null, u(), Error("not signed in");
+				if (JSON.stringify(n.user ?? null) !== JSON.stringify(e.user) && (e.user = n.user ?? null), n.user) try {
+					sessionStorage.removeItem(O + a);
+				} catch {}
 				e.state = "connected", e.address = n.host && n.port ? `${n.host}:${n.port}` : location.host, e.local = n.local === !0, c = n.assistant ?? null;
 				let r = s ? null : c;
 				JSON.stringify(r) !== JSON.stringify(e.assistant) && (e.assistant = r), JSON.stringify(n.nodes ?? []) !== JSON.stringify(e.nodes) && (e.nodes = n.nodes ?? []);
@@ -300,14 +350,14 @@ function k({ url: e, name: t = "The engine", disconnected: n = !1, assistantHidd
 				if (o) return;
 				e.state = "unavailable", e.address = null, e.assistant = null;
 			}
-			document.visibilityState === "visible" && (g = setTimeout(_, e.state === "connected" ? w : T));
+			document.visibilityState === "visible" && (_ = setTimeout(v, e.state === "connected" ? w : ee));
 		}
 	}
-	return _(), document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && _()), window.addEventListener("online", _), window.addEventListener("offline", _), h;
+	return v(), document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && v()), window.addEventListener("online", v), window.addEventListener("offline", v), g;
 }
 //#endregion
 //#region serverKinds.js
-function A(e, { log: t = (e) => console.warn(e) } = {}) {
+function M(e, { log: t = (e) => console.warn(e) } = {}) {
 	let n = null;
 	return c(() => e.status.nodes, async (r) => {
 		if (!r?.length || r.every((e) => e in f)) return;
@@ -338,32 +388,32 @@ function A(e, { log: t = (e) => console.warn(e) } = {}) {
 }
 //#endregion
 //#region duckdbVersions.js
-var ee = "1.33.1-dev64.0", j = "duckdb-extensions", M = `https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@${ee}/+esm`, N = "https://cdn.jsdelivr.net/npm/sql.js@1.13.0";
-function P(e) {
+var te = "1.33.1-dev64.0", N = "duckdb-extensions", P = `https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@${te}/+esm`, F = "https://cdn.jsdelivr.net/npm/sql.js@1.13.0";
+function I(e) {
 	let t = null;
 	return () => (t ??= e(), t.catch(() => t = null), t);
 }
-async function F() {
+async function L() {
 	let e = await import(
 		/* @vite-ignore */
-		M
+		P
 ), t = await e.selectBundle(e.getJsDelivrBundles()), n = URL.createObjectURL(new Blob([`importScripts("${t.mainWorker}");`], { type: "text/javascript" })), r = new e.AsyncDuckDB(new e.VoidLogger(), new Worker(n));
 	return await r.instantiate(t.mainModule, t.pthreadWorker), URL.revokeObjectURL(n), {
 		db: r,
 		conn: await r.connect()
 	};
 }
-var I = /it exists in the spatial extension/, L = (e) => new URL(e.replace(/\/?$/, "/"), document.baseURI).href.replace(/\/$/, "");
-async function R(e, t) {
+var R = /it exists in the spatial extension/, z = (e) => new URL(e.replace(/\/?$/, "/"), document.baseURI).href.replace(/\/$/, "");
+async function B(e, t) {
 	try {
-		await e.query(`INSTALL spatial FROM ${K(t)}`), await e.query("LOAD spatial");
+		await e.query(`INSTALL spatial FROM ${J(t)}`), await e.query("LOAD spatial");
 	} catch (e) {
 		let n = String(e?.message ?? e).split("\n")[0], r = "The app serves it (davy-jones-locker-extensions): see \"DuckDB's extensions\" in the davy-jones-locker README.", i = /Extension "(https?:[^"]+\.wasm)"/.exec(n)?.[1];
-		throw i && !await z(i) ? Error(`This query needs DuckDB's spatial extension, which isn't at ${i}. ${r}`) : Error(`This query needs DuckDB's spatial extension, which couldn't be loaded from ${t} (${n}). ${r}`);
+		throw i && !await V(i) ? Error(`This query needs DuckDB's spatial extension, which isn't at ${i}. ${r}`) : Error(`This query needs DuckDB's spatial extension, which couldn't be loaded from ${t} (${n}). ${r}`);
 	}
 	await e.query("SET geometry_always_xy = true");
 }
-async function z(e) {
+async function V(e) {
 	try {
 		let t = await fetch(e, { method: "HEAD" });
 		return t.ok && !String(t.headers.get("content-type")).includes("text/html");
@@ -371,39 +421,39 @@ async function z(e) {
 		return !1;
 	}
 }
-var B = P(async () => {
+var H = I(async () => {
 	let e = await import(
 		/* @vite-ignore */
-		`${N}/+esm`
+		`${F}/+esm`
 );
-	return (e.default ?? e)({ locateFile: (e) => `${N}/dist/${e}` });
+	return (e.default ?? e)({ locateFile: (e) => `${F}/dist/${e}` });
 });
-function V(e, t) {
+function U(e, t) {
 	if (e == null) return null;
 	let n = String(t);
-	return n.startsWith("Decimal") ? H(String(e), t.scale) : n.startsWith("Date") ? new Date(e).toISOString().slice(0, 10) : n.startsWith("Timestamp") ? new Date(e).toISOString().replace("T", " ").replace(/\.000Z|Z/, "") : U(e);
+	return n.startsWith("Decimal") ? W(String(e), t.scale) : n.startsWith("Date") ? new Date(e).toISOString().slice(0, 10) : n.startsWith("Timestamp") ? new Date(e).toISOString().replace("T", " ").replace(/\.000Z|Z/, "") : G(e);
 }
-function H(e, t) {
+function W(e, t) {
 	if (!t) return e;
 	let n = e.startsWith("-"), r = (n ? e.slice(1) : e).padStart(t + 1, "0");
 	return `${n ? "-" : ""}${r.slice(0, -t)}.${r.slice(-t)}`;
 }
-function U(e) {
-	return typeof e == "bigint" ? Number.isSafeInteger(Number(e)) ? Number(e) : String(e) : typeof e != "object" || !e ? e : typeof e.toJSON == "function" ? U(e.toJSON()) : Array.isArray(e) || ArrayBuffer.isView(e) ? Array.from(e, U) : Object.fromEntries(Object.entries(e).map(([e, t]) => [e, U(t)]));
+function G(e) {
+	return typeof e == "bigint" ? Number.isSafeInteger(Number(e)) ? Number(e) : String(e) : typeof e != "object" || !e ? e : typeof e.toJSON == "function" ? G(e.toJSON()) : Array.isArray(e) || ArrayBuffer.isView(e) ? Array.from(e, G) : Object.fromEntries(Object.entries(e).map(([e, t]) => [e, G(t)]));
 }
-var W = (e) => `\\x${Array.from(e, (e) => e.toString(16).padStart(2, "0")).join("")}`, G = (e) => `"${e.replaceAll("\"", "\"\"")}"`, K = (e) => `'${e.replaceAll("'", "''")}'`;
-function q({ extensionRepository: e = j } = {}) {
-	let t = P(F), n = P(async () => R((await t()).conn, L(e))), r = async (e) => (await t()).conn.query(e);
+var K = (e) => `\\x${Array.from(e, (e) => e.toString(16).padStart(2, "0")).join("")}`, q = (e) => `"${e.replaceAll("\"", "\"\"")}"`, J = (e) => `'${e.replaceAll("'", "''")}'`;
+function Y({ extensionRepository: e = N } = {}) {
+	let t = I(L), n = I(async () => B((await t()).conn, z(e))), r = async (e) => (await t()).conn.query(e);
 	return {
 		async query(e) {
 			let t;
 			try {
 				t = await r(e);
 			} catch (i) {
-				if (!I.test(String(i?.message))) throw i;
+				if (!R.test(String(i?.message))) throw i;
 				await n(), t = await r(e);
 			}
-			return Y(t);
+			return Z(t);
 		},
 		loadSpatial: () => n(),
 		async registerFile(e, n) {
@@ -418,41 +468,41 @@ function q({ extensionRepository: e = j } = {}) {
 			let { db: n } = await t();
 			await n.dropFile(e);
 		},
-		readSqlite: X,
-		writeSqlite: Z
+		readSqlite: ne,
+		writeSqlite: re
 	};
 }
-var J = q();
-function Y(e) {
+var X = Y();
+function Z(e) {
 	let t = e.schema.fields, n = t.map((t, n) => ({
 		vector: e.getChildAt(n),
 		type: t.type
 	})), r = [];
-	for (let t = 0; t < e.numRows; t++) r.push(n.map((e) => V(e.vector.get(t), e.type)));
+	for (let t = 0; t < e.numRows; t++) r.push(n.map((e) => U(e.vector.get(t), e.type)));
 	return {
 		columns: t.map((e) => e.name),
 		rows: r
 	};
 }
-async function X(e) {
-	let t = new (await (B())).Database(e);
+async function ne(e) {
+	let t = new (await (H())).Database(e);
 	try {
 		return (t.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY rowid")[0]?.values ?? []).map(([e]) => ({
 			name: e,
-			columns: (t.exec(`PRAGMA table_info(${G(e)})`)[0]?.values ?? []).map((e) => e[1]),
-			rows: (t.exec(`SELECT * FROM ${G(e)}`)[0]?.values ?? []).map((e) => e.map((e) => e instanceof Uint8Array ? W(e) : e))
+			columns: (t.exec(`PRAGMA table_info(${q(e)})`)[0]?.values ?? []).map((e) => e[1]),
+			rows: (t.exec(`SELECT * FROM ${q(e)}`)[0]?.values ?? []).map((e) => e.map((e) => e instanceof Uint8Array ? K(e) : e))
 		}));
 	} finally {
 		t.close();
 	}
 }
-async function Z(e, { statements: t = [] } = {}) {
-	let n = new (await (B())).Database(), r = (e) => typeof e == "boolean" ? Number(e) : e instanceof Uint8Array || typeof e != "object" || !e ? e : JSON.stringify(e);
+async function re(e, { statements: t = [] } = {}) {
+	let n = new (await (H())).Database(), r = (e) => typeof e == "boolean" ? Number(e) : e instanceof Uint8Array || typeof e != "object" || !e ? e : JSON.stringify(e);
 	try {
 		for (let { name: t, columns: i, rows: a, types: o } of e) {
-			let e = i.map((e, t) => o?.[t] ? `${G(e)} ${o[t]}` : G(e));
-			n.run(`CREATE TABLE ${G(t)} (${e.join(", ")})`);
-			let s = n.prepare(`INSERT INTO ${G(t)} VALUES (${i.map(() => "?").join(", ")})`);
+			let e = i.map((e, t) => o?.[t] ? `${q(e)} ${o[t]}` : q(e));
+			n.run(`CREATE TABLE ${q(t)} (${e.join(", ")})`);
+			let s = n.prepare(`INSERT INTO ${q(t)} VALUES (${i.map(() => "?").join(", ")})`);
 			for (let e of a) s.run(e.map(r));
 			s.free();
 		}
@@ -511,7 +561,7 @@ function $(e = "davy-jones-locker") {
 }
 //#endregion
 //#region DavyJonesLocker.vue
-var te = {
+var ie = {
 	__name: "DavyJonesLocker",
 	props: {
 		engineUrl: {
@@ -540,14 +590,14 @@ var te = {
 		}
 	},
 	setup(i) {
-		let c = i, d = y(c.storageName), f = c.engineUrl ? k({
+		let c = i, d = y(c.storageName), f = c.engineUrl ? j({
 			url: c.engineUrl,
 			name: c.engineName,
 			disconnected: !!d.get("disconnected"),
 			assistantHidden: !!d.get("assistant-hidden")
 		}) : null;
-		f && A(f);
-		let p = $(c.storageName), m = q({ extensionRepository: c.extensionRepository }), h = a(S(d.get("theme"))), g = e(() => h.value ?? c.theme), _ = b({
+		f && M(f);
+		let p = $(c.storageName), m = Y({ extensionRepository: c.extensionRepository }), h = a(S(d.get("theme"))), g = e(() => h.value ?? c.theme), _ = b({
 			client: f,
 			engineName: c.engineName,
 			kept: d,
@@ -582,4 +632,4 @@ var te = {
 	}
 };
 //#endregion
-export { te as DavyJonesLocker, b as createAppCommands, q as createDuckdbSql, k as createEngineClient, $ as createLocalGraphStorage, A as defineServerKinds, J as duckdbSql, y as localSettings };
+export { ie as DavyJonesLocker, b as createAppCommands, Y as createDuckdbSql, j as createEngineClient, $ as createLocalGraphStorage, M as defineServerKinds, X as duckdbSql, y as localSettings };

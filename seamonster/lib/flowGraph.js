@@ -131,6 +131,10 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
     // Disconnected on purpose (the app shell's f.Security.DisconnectBackend).
     disconnected: server?.status?.disconnected === true,
     assistant: (typeof server?.assist === 'function' && server?.status?.assistant) || null,
+    // Whether the server signs people in (its provider's name), and who's
+    // signed in ({ email, name }); null when it signs no one in.
+    signIn: server?.status?.signIn || null,
+    user: server?.status?.user || null,
   }))
   let deletions = [] // undo stack of { nodes, edges }, the canvas level's
   let contextPoint = { x: 0, y: 0 } // client coordinates of the last right-click on the canvas
@@ -847,12 +851,12 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
     () => serverStatus.value.state,
     (state, previous) => {
       if (state === 'connected') {
-        const { address, local } = serverStatus.value
-        log(`Connected to the server${address ? ` at ${address}` : ''}.`)
+        const { address, local, signIn, user } = serverStatus.value
+        log(`Connected to the server${address ? ` at ${address}` : ''}${user?.email ? `, signed in as ${user.email}` : ''}.`)
         if (local) {
           log(
-            'The server is in local development mode (IS_LOCAL): it signs no one in, and node kinds that run on it ' +
-              'can reach the network. Keep it on your own machine.',
+            `The server is in local development mode (IS_LOCAL): ${signIn ? '' : 'it signs no one in, and '}node kinds ` +
+              'that run on it can reach the network. Keep it on your own machine.',
             'warning',
           )
         }

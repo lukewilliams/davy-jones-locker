@@ -80,7 +80,14 @@ SEAMONSTER's). The parts are exported too, for an app that wires
   `disconnect()`, `connect()` and `hideAssistant(hidden)` are what
   `f.Security` and `f.Assistant` use; `runLoop`
   runs a Loop node as a job (`POST /jobs`), asking how it's going every
-  second, and collects its tables.
+  second, and collects its tables. Every request carries `X-Requested-By`,
+  which the engine requires of changes. With an engine that signs people in,
+  `status.signIn` names its provider and `status.user` is `{ email, name }`;
+  when `/health` says no one's signed in, or any request answers 401, the
+  window goes to the engine's sign-in (`/auth/login`), which comes back to
+  the same page. At most once a minute, so a sign-in that doesn't take can't
+  loop: the window then shows the engine as unavailable, and a reload tries
+  again. `signOut()` goes to `/auth/logout`.
 - `defineServerKinds(client)`: defines the engine's own node kinds and
   categories in the browser (with SEAMONSTER's `defineNodeKind`), whenever the
   engine's list of them changes ([serverKinds.js](app/serverKinds.js)). A
@@ -108,19 +115,23 @@ in the browser, `b.` commands on the engine:
 | `f.Terminal.Clear` | empties the app's log |
 | `f.Theme = "LUX"` | the theme: a built-in one or one the app defines (`defineTheme`), kept in this browser over the `theme` prop |
 | `f.Security.DisconnectBackend`, `f.Security.EnableBackend` | stop talking to the engine (nothing is sent, the footer turns blue, nodes that need it can't run), kept across reloads; and start again |
+| `f.Security.WhoAmI` | says who you're signed in to the engine as |
+| `f.Security.SignOut` | signs you out of the engine |
 | `f.Assistant.Disable`, `f.Assistant.Enable` | hide the AI assistant in this browser, and show it again |
-| `b.LiteLLMURL`, `b.LiteLLMKey` (secret), `b.Assistant.Model`, `b.Assistant.Enabled` | the assistant's settings, over the engine's `.env`, for everyone using that engine until it restarts |
-| `b.Settings.Reset` | forgets every `b.` setting set by command |
+| `b.LiteLLMURL`, `b.LiteLLMKey` (secret), `b.Assistant.Model`, `b.Assistant.Enabled` | the assistant's settings, over the engine's `.env`: yours, saved on the engine, when it signs you in; for everyone using it until it restarts when it signs no one in |
+| `b.Settings.Reset` | forgets every `b.` setting set by command (yours, signed in) |
 
 The `b.` commands come from the engine (`GET /commands`) whenever it
-connects, so an app's own appear too; while it's away they say so. A `b.`
-setting set here is also kept in this browser, and sent again when the
-engine comes back without it (it restarted); one the engine drops (a new
-`b.LiteLLMURL` drops the key set before) is forgotten here too. What's kept
-is in localStorage under `<storage-name>:` (`theme`, `disconnected`,
-`assistant-hidden`, `engine-settings`), where any script on the page can
-read it, secrets included: this is for local development, until sign-in
-keeps settings per user on the engine (roadmap 8b part b).
+connects, so an app's own appear too; while it's away they say so. With an
+engine that signs you in, the engine keeps your `b.` settings, and nothing of
+them stays in the browser. With one that signs no one in (local
+development), a `b.` setting set here is also kept in this browser, and sent
+again when the engine comes back without it (it restarted); one the engine
+drops (a new `b.LiteLLMURL` drops the key set before) is forgotten here too.
+What's kept is in localStorage under `<storage-name>:` (`theme`,
+`disconnected`, `assistant-hidden`, and without sign-in `engine-settings`),
+where any script on the page can read it, secrets included; signing in
+forgets any `engine-settings` kept from before.
 
 An app adds its own `f.` commands with the `commands` prop, and its own `b.`
 ones with the engine's `create_app(commands=...)` (the engine README, "The
@@ -189,7 +200,9 @@ ghcr.io/lukewilliams/davy-jones-locker-engine`).
 - Secrets live in the engine's `.env`, never in the browser.
 - Python libraries are enabled by editing `engine/runner/requirements.in`,
   recompiling with hashes, and rebuilding; scripts can't install anything.
-- There's no sign-in yet, so the engine starts only with `IS_LOCAL=true`
-  (local development: it signs no one in, and the app's node kinds can reach
-  the network). Keep it on your own machine. The app shows LOCAL beside the
-  server's address, and says so in the Terminal.
+- A deployed engine signs users in (`IDENTITY`: OIDC or a proxy's headers)
+  and serves only those `ALLOWED_USERS` names; the rule is the app's `.env`,
+  never code. Only local development (`IS_LOCAL=true`) may sign no one in,
+  and lets the app's node kinds reach the network: keep such an engine on
+  your own machine. The app shows LOCAL beside the server's address, and
+  says so in the Terminal.

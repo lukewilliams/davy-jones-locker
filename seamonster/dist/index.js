@@ -2165,7 +2165,9 @@ function Un({ sql: e = null, files: t = null, server: n = null } = {}) {
 		address: n?.status?.address ?? null,
 		local: n?.status?.local === !0,
 		disconnected: n?.status?.disconnected === !0,
-		assistant: typeof n?.assist == "function" && n?.status?.assistant || null
+		assistant: typeof n?.assist == "function" && n?.status?.assistant || null,
+		signIn: n?.status?.signIn || null,
+		user: n?.status?.user || null
 	})), s = [], c = {
 		x: 0,
 		y: 0
@@ -2691,8 +2693,8 @@ function Un({ sql: e = null, files: t = null, server: n = null } = {}) {
 	let Ve = () => v.app.splice(0);
 	z(() => a.value.state, (e, t) => {
 		if (e === "connected") {
-			let { address: e, local: t } = a.value;
-			Be(`Connected to the server${e ? ` at ${e}` : ""}.`), t && Be("The server is in local development mode (IS_LOCAL): it signs no one in, and node kinds that run on it can reach the network. Keep it on your own machine.", "warning");
+			let { address: e, local: t, signIn: n, user: r } = a.value;
+			Be(`Connected to the server${e ? ` at ${e}` : ""}${r?.email ? `, signed in as ${r.email}` : ""}.`), t && Be(`The server is in local development mode (IS_LOCAL): ${n ? "" : "it signs no one in, and "}node kinds that run on it can reach the network. Keep it on your own machine.`, "warning");
 		} else e === "unavailable" && a.value.disconnected ? Be("Disconnected from the server in this browser: nothing is sent to it, and nodes that run there can't run.", "note") : e === "unavailable" && Be(t === "connected" ? "Lost the server: nodes that run there can't run until it's back." : n ? "The server isn't available: nodes that run there can't run until it is." : "There's no server: everything runs in this browser, and nodes that need a server can't run.", t === "connected" ? "error" : "note");
 	}, { immediate: !0 });
 	function He({ filename: e, contentType: t, bytes: n }) {
@@ -5513,7 +5515,7 @@ var Qi = { class: "flow-command" }, $i = [
 		}, [g("span", {
 			class: S(["flow-blink-dot", { "is-steady": !i.value }]),
 			"aria-hidden": "true"
-		}, null, 2), r.value ? (E(), h(d, { key: 0 }, [_(" LIVE · connected to server" + P(I(n).address ? ` ${I(n).address}` : "") + P(I(n).local ? " · LOCAL" : ""), 1)], 64)) : (E(), h(d, { key: 1 }, [_("backend not available, client execution only")], 64))], 2));
+		}, null, 2), r.value ? (E(), h(d, { key: 0 }, [_(" LIVE · connected to server" + P(I(n).address ? ` ${I(n).address}` : "") + P(I(n).local ? " · LOCAL" : "") + P(I(n).user?.email ? ` · ${I(n).user.email}` : ""), 1)], 64)) : (E(), h(d, { key: 1 }, [_("backend not available, client execution only")], 64))], 2));
 	}
 }, Yo = 400;
 function Xo(e, t) {

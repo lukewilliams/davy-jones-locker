@@ -27,7 +27,9 @@ Here the runner has no container around it (and it can't limit memory on
 macOS, or apply any process limits on Windows): this is for development only. `docker compose -f
 davy-jones-locker/compose.yaml up --build` runs both as they're meant to run, once
 `davy-jones-locker/.env` has `IS_LOCAL=true` (copy `.env.example` beside it). Without
-`IS_LOCAL=true` the engine refuses to start: there's no sign-in yet.
+`IS_LOCAL=true` the engine starts only with sign-in set up (`IDENTITY` in
+`engine/.env`). To work on sign-in, engine-shared's identity-mock is an OIDC
+provider for your own machine (its README).
 
 ## Before you open a pull request
 

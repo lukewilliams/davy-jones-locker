@@ -3,7 +3,9 @@ first time the database answers (the engine owns them):
 
   graphs  saved graphs (pipeline documents), by ID
   files   stored data by key (a DataIngest node's tables, as Parquet)
-  runs    a record of each server-side graph execution
+  runs    a record of each server-side graph execution, and who started it
+  user_settings  each user's settings set by b. commands, encrypted
+                 (identity.seal, SECRET_KEY)
 """
 
 import json
@@ -55,6 +57,13 @@ CREATE TABLE IF NOT EXISTS {S}.runs (
   finished_at timestamptz,
   status      text NOT NULL,
   results     jsonb
+);
+ALTER TABLE {S}.runs ADD COLUMN IF NOT EXISTS user_id text;
+
+CREATE TABLE IF NOT EXISTS {S}.user_settings (
+  user_id     text PRIMARY KEY,
+  settings    text NOT NULL,
+  updated_at  timestamptz NOT NULL DEFAULT now()
 );
 """
 
@@ -144,14 +153,39 @@ def get_file(key: str) -> bytes | None:
 
 # ---- Runs ----
 
-def record_run(graph_id: str | None, trigger: str, started: datetime, status: str, results: dict) -> str:
+def record_run(
+    graph_id: str | None, trigger: str, started: datetime, status: str, results: dict, user_id: str | None = None,
+) -> str:
     run_id = str(uuid.uuid4())
     with connect() as db:
         db.execute(
             f"""
-            INSERT INTO {S}.runs (id, graph_id, trigger, started_at, finished_at, status, results)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO {S}.runs (id, graph_id, trigger, started_at, finished_at, status, results, user_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (run_id, graph_id, trigger, started, datetime.now(timezone.utc), status, json.dumps(results)),
+            (run_id, graph_id, trigger, started, datetime.now(timezone.utc), status, json.dumps(results), user_id),
         )
     return run_id
+
+
+# ---- Each user's settings (sealed by the caller: see commands.py) ----
+
+def get_user_settings(user_id: str) -> str | None:
+    with connect() as db:
+        row = db.execute(f"SELECT settings FROM {S}.user_settings WHERE user_id = %s", (user_id,)).fetchone()
+    return row[0] if row else None
+
+
+def put_user_settings(user_id: str, sealed: str | None) -> None:
+    """Save them, or forget them (None)."""
+    with connect() as db:
+        if sealed is None:
+            db.execute(f"DELETE FROM {S}.user_settings WHERE user_id = %s", (user_id,))
+        else:
+            db.execute(
+                f"""
+                INSERT INTO {S}.user_settings (user_id, settings) VALUES (%s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET settings = EXCLUDED.settings, updated_at = now()
+                """,
+                (user_id, sealed),
+            )

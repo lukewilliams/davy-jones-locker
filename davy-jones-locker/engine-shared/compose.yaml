@@ -9,7 +9,10 @@
 # own compose project, so `tilt down` and `docker compose down` at the repo
 # root leave it, and its data, alone.
 #
-# Later here: easyauth-mock (identity), azurite (blob storage), perhaps n8n.
+# identity-mock (sign-in for local development) runs only when asked for:
+#   docker compose -f davy-jones-locker/engine-shared/compose.yaml --profile identity up -d --build --wait
+#
+# Later here: azurite (blob storage), perhaps n8n.
 
 name: engine-shared
 
@@ -34,6 +37,30 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+    restart: unless-stopped
+
+  # An OpenID Connect provider that signs in whoever you say you are, for an
+  # engine with IDENTITY=oidc on this machine (identity-mock/server.py).
+  # Browsers reach it on this machine, engines on the shared network.
+  identity-mock:
+    build: ./identity-mock
+    image: engine-shared-identity-mock
+    profiles: ["identity"]
+    environment:
+      PUBLIC_URL: http://localhost:${IDENTITY_MOCK_PORT:-9100}
+      INTERNAL_URL: http://identity-mock:3000
+      CLIENT_ID: ${IDENTITY_MOCK_CLIENT_ID:-engine-dev}
+      CLIENT_SECRET: ${IDENTITY_MOCK_CLIENT_SECRET:-engine-dev-secret}
+      DEFAULT_EMAIL: ${IDENTITY_MOCK_EMAIL:-dev@example.com}
+    ports:
+      - "127.0.0.1:${IDENTITY_MOCK_PORT:-9100}:3000"
+    networks:
+      - shared
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/jwks')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
 
 networks:

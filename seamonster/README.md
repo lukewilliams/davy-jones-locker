@@ -229,10 +229,12 @@ run whole graphs, for scheduled runs.
 `FlowgraphEditor`'s `server` prop is the server engine as the host app sees it:
 
 ```
-status                      reactive { state, address, local, assistant }: state
-                            `checking`, `connected` or `unavailable`; local
-                            true for a server in local development mode;
-                            assistant { model, sampleRows } or null
+status                      reactive { state, address, local, assistant, signIn?,
+                            user? }: state `checking`, `connected` or
+                            `unavailable`; local true for a server in local
+                            development mode; assistant { model, sampleRows }
+                            or null; signIn the server's sign-in provider (null:
+                            it signs no one in); user { email, name } or null
 query({ sql, inputs })      -> Promise<Uint8Array>  the result, as Parquet
 runPython({ code, inputs }) -> Promise<{ output, value?, variables?, error?, table? }>
 runNode({ kind, node, inputs, files })
@@ -253,7 +255,7 @@ its path, `subnets` the document's shared subnets, `inputs` `[{ pin, bytes }]`
 (`item` for items), `progress({ done, total, failed })` called as its runs
 go, and `outputs` `[{ slot, bytes }]`. DAVY JONES' LOCKER's app shell supplies one
 (`createEngineClient({ url, name })`), which asks the engine's `GET /health`
-for `{ status: 'ok', host?, port?, local? }` every 5 s while it answers, every 15 s
+for `{ status: 'ok', host?, port?, local?, signIn?, user? }` every 5 s while it answers, every 15 s
 while it doesn't (and not while the page is hidden). What it changes:
 
 - Bottom left, in the window's edge gap: "LIVE · connected to server
@@ -262,9 +264,12 @@ while it doesn't (and not while the page is hidden). What it changes:
   server is connected and the graph has a node that runs on it, so a blink
   always means some data will go to the server; otherwise it's steady.
   "· LOCAL" follows the address when the server is in local development mode
-  (`status.local`: it signs no one in, and node kinds that run on it can
-  reach the network), and the app's log in the Terminal warns so on
-  connecting.
+  (`status.local`: node kinds that run on it can reach the network), and the
+  app's log in the Terminal warns so on connecting (adding that it signs no
+  one in, unless `status.signIn` names a sign-in provider). When the server
+  signed the user in, `status.user` (`{ email, name }`) puts their email at
+  the end, and the log says who connected. SEAMONSTER signs no one in
+  itself: the host does.
 - A node that runs on the server shows "Backend not available." as its status
   while it's away, and a blinking dot, top right in its label's colour
   ("Executes on server"), while it's there. Manage notes that running it

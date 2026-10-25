@@ -1,9 +1,15 @@
 """The engine: FastAPI, on port 3000. An app makes its own with create_app()
 (`app` here is one with nothing added, for running the engine as it is).
 
-  GET  /health                  { status: 'ok', host, port, local, assistant, nodes }:
-                                the app checks this (`nodes`: the app's node kinds'
-                                names; `local`: IS_LOCAL)
+  GET  /health                  { status: 'ok', host, port, local, assistant, nodes,
+                                signIn, user }: the app checks this (`nodes`: the
+                                app's node kinds' names; `local`: IS_LOCAL; `signIn`:
+                                the provider, null when it signs no one in; `user`:
+                                { email, name }). Without a user, only { status,
+                                signIn, user: null }
+  GET  /auth/login?next=        sign in, then back to `next` (a path on the app's site)
+  GET  /auth/callback           where the sign-in provider sends the browser back (oidc)
+  GET  /auth/logout             sign out
   GET  /nodes                   the app's node kinds and categories (nodes.py), for
                                 the browser to define
   POST /query                   SQL over the query database, with inputs as Parquet
@@ -27,9 +33,11 @@
   POST /assist                  the AI assistant: a node's code from a request
                                 in plain words (assist.py)
 
-Errors are JSON { error }, their message meant for the user. There's no
-sign-in yet, so the engine starts only with IS_LOCAL=true (local
-development), and must stay on the developer's machine.
+Errors are JSON { error }, their message meant for the user. Every endpoint
+but /health and /auth/* needs a signed-in user whom ALLOWED_USERS lets in
+(401 or 403 otherwise; identity.py), and requests that change things the
+X-Requested-By header. In local development (IS_LOCAL=true) the engine may
+sign no one in (IDENTITY=none); anywhere else it starts only with sign-in.
 
 Requests from the sandboxes (the runner, the node worker) are refused, every
 one of them (see settings.SANDBOX_HOSTS): code runs there, and nothing it does
@@ -50,30 +58,37 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
-from . import assist, database, executor, formdata, jobs, noderunner, nodes, runner, settings, sql
+from . import assist, database, executor, formdata, identity, jobs, noderunner, nodes, runner, settings, sql
 from . import commands as terminal
+from .identity import configure as configure_identity
 
 log = logging.getLogger("davy-jones-locker")
 MAX_UPLOAD = settings.MAX_UPLOAD_MB * 1024 * 1024
 
 
-NOT_LOCAL = (
-    "IS_LOCAL isn't true, so this engine counts as deployed, and a deployed engine requires sign-in, which it "
-    "doesn't have yet (roadmap 8b part b). For local development, set IS_LOCAL=true (the app's compose .env, or the "
-    "environment)."
-)
-LOCAL = (
-    "IS_LOCAL is true: local development only. The engine signs no one in, and the app's node kinds can reach the "
-    "network. Keep it on this machine: never expose it to a network others use."
-)
+# The sign-in provider (create_app sets it).
+provider: identity.Identity = identity.NoIdentity()
+
+
+def local_warning() -> str:
+    return (
+        "IS_LOCAL is true: local development only. "
+        + ("The engine signs no one in, and the" if provider.name == "none" else f"Sign-in is {provider.name}; the")
+        + " app's node kinds can reach the network. Keep it on this machine: never expose it to a network others use."
+    )
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    if not settings.IS_LOCAL:
-        log.error(NOT_LOCAL)
-        raise RuntimeError(NOT_LOCAL)
-    log.warning(LOCAL)
+    problems = identity.problems(provider)
+    if problems:
+        message = " ".join(problems)
+        log.error(message)
+        raise RuntimeError(message)
+    if settings.IS_LOCAL:
+        log.warning(local_warning())
+    else:
+        log.info("Sign-in: %s.", provider.name)
     if database.available():
         try:
             await run_in_threadpool(database.migrate)
@@ -109,11 +124,39 @@ async def invalid_request(_: Request, e: RequestValidationError):
 
 @router.get("/health")
 def health():
+    user = identity.current_user.get()
+    sign_in = None if provider.name == "none" else provider.name
+    if sign_in and user is None:
+        # Nothing about the engine for someone who isn't signed in.
+        return {"status": "ok", "signIn": sign_in, "user": None}
     return {
         "status": "ok", "host": settings.PUBLIC_HOST, "port": settings.PORT, "hostname": socket.gethostname(),
         "local": settings.IS_LOCAL,
         "assistant": assist.summary(), "nodes": sorted(noderunner.KINDS),
+        "signIn": sign_in, "user": user.describe() if sign_in and user else None,
     }
+
+
+# ---- Signing in (identity.py) ----
+
+@router.get("/auth/login")
+async def login(request: Request, next: str = "/"):
+    return await provider.login(request, identity.safe_next(next))
+
+
+@router.get("/auth/callback")
+async def login_callback(request: Request):
+    return await provider.callback(request)
+
+
+@router.get("/auth/logout")
+async def logout(request: Request):
+    return await provider.logout(request)
+
+
+def user_id() -> str | None:
+    user = identity.signed_in()
+    return user.id if user else None
 
 
 @router.get("/nodes")
@@ -208,6 +251,7 @@ class ExecuteSaved(BaseModel):
 
 async def run_graph(document: dict, targets: list[str] | None, graph_id: str | None, trigger: str):
     started = datetime.now(timezone.utc)
+    owner = user_id()
     try:
         results = await run_in_threadpool(executor.execute, document, targets)
     except ValueError as e:
@@ -219,7 +263,7 @@ async def run_graph(document: dict, targets: list[str] | None, graph_id: str | N
         # Record everything but exported files (they're in the response).
         recorded = {k: {f: v for f, v in r.items() if f != "export"} for k, r in results.items()}
         try:
-            run_id = await run_in_threadpool(database.record_run, graph_id, trigger, started, status, recorded)
+            run_id = await run_in_threadpool(database.record_run, graph_id, trigger, started, status, recorded, owner)
         except database.NoDatabase as e:
             log.warning("The run wasn't recorded: %s", e)
     return {"runId": run_id, "status": status, "failed": failed, "results": results}
@@ -264,7 +308,7 @@ async def start_job(request: Request):
     except ValueError as e:
         return error(str(e))
     try:
-        job = jobs.start(kind, work)
+        job = jobs.start(kind, work, owner=user_id())
     except jobs.Busy as e:
         return error(str(e), 429)
     return JSONResponse(job.describe(), status_code=202)
@@ -309,6 +353,7 @@ async def graph_job(body: bytes):
     else:
         raise ValueError("Send a graph as `document`, or name a saved one as `graphId`.")
     targets = spec.get("targets")
+    owner = user_id()  # here: the job's thread doesn't know the request
 
     def work(job: jobs.Job) -> dict:
         started = datetime.now(timezone.utc)
@@ -322,7 +367,7 @@ async def graph_job(body: bytes):
         if database.available():
             recorded = {k: {f: v for f, v in r.items() if f != "export"} for k, r in results.items()}
             try:
-                run_id = database.record_run(graph_id, "job", started, status, recorded)
+                run_id = database.record_run(graph_id, "job", started, status, recorded, owner)
             except database.NoDatabase as e:
                 log.warning("The job's run wasn't recorded: %s", e)
         return {"runId": run_id, "status": status, "failed": failed, "results": results}
@@ -332,7 +377,8 @@ async def graph_job(body: bytes):
 
 def find_job(job_id: str) -> jobs.Job | JSONResponse:
     job = jobs.get(job_id)
-    if job is None:
+    # Someone else's job is as good as none.
+    if job is None or job.owner != user_id():
         return error(f"No job {job_id}: it never was, or it finished more than {settings.JOB_KEEP_SECONDS} seconds ago.", 404)
     return job
 
@@ -370,10 +416,10 @@ def job_result(job_id: str):
 
 @router.delete("/jobs/{job_id}")
 def cancel_job(job_id: str):
-    job = jobs.cancel(job_id)
-    if job is None:
-        return find_job(job_id)
-    return job.describe()
+    job = find_job(job_id)
+    if isinstance(job, JSONResponse):
+        return job
+    return jobs.cancel(job_id).describe()
 
 
 # ---- The Terminal's b. commands (roadmap 8f) ----
@@ -389,13 +435,8 @@ def list_commands():
 @router.post("/commands")
 async def run_command(request: Request):
     """JSON { name, value? }: sets a setting to `value`, prints it without
-    one, or runs an action. Answers { message }. Only in local development
-    (IS_LOCAL), since there's no sign-in yet to say who may."""
-    if not settings.IS_LOCAL:
-        return error(
-            "Commands that change the engine need sign-in, which it doesn't have yet, or local development "
-            "(IS_LOCAL=true).", 403,
-        )
+    one, or runs an action. Answers { message }. A setting is the signed-in
+    user's (saved), or everyone's when the engine signs no one in."""
     try:
         body = json.loads(await read_body(request) or b"{}")
     except ValueError:
@@ -464,6 +505,43 @@ async def put_file(key: str, request: Request):
     return {"key": key, "size": len(body)}
 
 
+# ---- Requiring a user ----
+
+OPEN_PATHS = {"/health", "/auth/login", "/auth/callback", "/auth/logout"}
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+async def require_user(request: Request, call_next):
+    """Who the request is from (identity.current_user while it runs), and
+    refusing it without a user ALLOWED_USERS lets in, or without
+    X-Requested-By when it changes things."""
+    try:
+        user = provider.authenticate(request)
+    except Exception:
+        log.exception("Checking who a request is from failed.")
+        user = None
+    refused = user is not None and provider.name != "none" and not identity.allowed(user)
+    if request.url.path not in OPEN_PATHS:
+        if user is None:
+            return error("You're not signed in to the engine, or your sign-in has expired: sign in again.", 401)
+        if refused:
+            return error(f"{user.email or 'This account'} isn't allowed to use this engine.", 403)
+        if request.method not in SAFE_METHODS and not request.headers.get(identity.REQUEST_HEADER):
+            return error(
+                f"Requests that change things need the {identity.REQUEST_HEADER} header (any value): the app sends "
+                "it, and a page on another site can't.", 403,
+            )
+    if refused:
+        user = None
+    if user is not None and user.id != identity.LOCAL_USER.id and not terminal.loaded(user):
+        await run_in_threadpool(terminal.load, user)
+    token = identity.current_user.set(user)
+    try:
+        return await call_next(request)
+    finally:
+        identity.current_user.reset(token)
+
+
 # ---- Refusing the sandboxes ----
 
 def _address(text: str):
@@ -503,13 +581,19 @@ def create_app(
     nodes: list[nodes.NodeKind] | None = None,
     categories: list[nodes.NodeCategory] | None = None,
     commands: list[terminal.Command] | None = None,
+    identity: identity.Identity | None = None,
 ) -> FastAPI:
     """The engine as a FastAPI app. An app's entry point calls this, with its
-    own node kinds and their categories (see nodes/), and its own b. commands
-    for the Terminal (see commands.py)."""
+    own node kinds and their categories (see nodes/), its own b. commands for
+    the Terminal (see commands.py), and its own sign-in provider when IDENTITY
+    in .env doesn't name it (see identity.py)."""
+    global provider
     noderunner.register(nodes or [], categories or [])
     terminal.register(commands or [])
+    provider = configure_identity(identity)
     app = FastAPI(title=title, lifespan=lifespan)
+    # The last added runs first: the sandboxes are refused before anything.
+    app.middleware("http")(require_user)
     app.middleware("http")(refuse_sandboxes)
     app.add_exception_handler(database.NoDatabase, no_database)
     app.add_exception_handler(runner.RunnerUnavailable, no_runner)

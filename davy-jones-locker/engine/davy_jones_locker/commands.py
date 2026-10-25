@@ -2,26 +2,33 @@
 Terminal runs on the engine. GET /commands lists them for completion, and
 POST /commands runs one (main.py).
 
-A setting set by command is kept in this process's memory, over what .env
-says, for everyone using the engine until it restarts (the browser sends it
-again then: see the app shell's commands.js). There's no sign-in yet, so
-commands are accepted only in local development (IS_LOCAL). Values are never
-logged, and a secret's never leaves the engine.
+A setting set by command applies over what .env says, and to whoever set it:
+- signed in (identity.py), it's that user's, saved in the database encrypted
+  (identity.seal, SECRET_KEY), and used for their requests only
+- when the engine signs no one in (local development), it's kept in this
+  process's memory for everyone until the engine restarts (the browser sends
+  it again then: see the app shell's commands.js)
+Values are never logged, and a secret's never leaves the engine.
 
 The LiteLLM key in .env goes only to the LiteLLM address in .env: once
 b.LiteLLMURL is set by command, the assistant has no key until b.LiteLLMKey
 is set too, so the .env key can't be sent to an address someone typed.
 
-An app adds its own commands with create_app(commands=[...]).
+An app adds its own commands with create_app(commands=[...]); one that keeps
+a setting per user keeps it in user_settings(), which is saved after each
+command.
 """
 
 import json
+import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import settings
+from . import database, identity, settings
+
+log = logging.getLogger("davy-jones-locker.commands")
 
 NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
 TYPES = {"string": str, "number": (int, float), "boolean": bool}
@@ -61,39 +68,81 @@ class Command:
         return about
 
 
-# Settings set by command, by name.
-_overrides: dict[str, Any] = {}
+# Settings set by command, by name: everyone's when the engine signs no one
+# in, and each signed-in user's as saved (by user ID, loaded by load()).
+_local: dict[str, Any] = {}
+_saved: dict[str, dict[str, Any]] = {}
+
+
+def user_settings() -> dict[str, Any]:
+    """The settings set by command for whoever is asking."""
+    user = identity.signed_in()
+    if user is None:
+        return _local
+    if user.id not in _saved:
+        load(user)
+    return _saved[user.id]
+
+
+def loaded(user: identity.User) -> bool:
+    return user.id in _saved
+
+
+def load(user: identity.User) -> None:
+    """Read a signed-in user's saved settings, once per engine process (main.py
+    calls this before their request runs). Without the database, they have
+    none: .env's apply."""
+    if user.id in _saved:
+        return
+    found = None
+    if database.available():
+        try:
+            found = identity.unseal("settings", database.get_user_settings(user.id) or "")
+        except database.NoDatabase as e:
+            log.warning("Couldn't read %s's settings: %s", user.email or user.id, e)
+            return  # tried again on their next request
+    _saved[user.id] = found if isinstance(found, dict) else {}
+
+
+def _save(user: identity.User, values: dict[str, Any]) -> None:
+    if not database.available():
+        raise CommandError("Settings set by command are saved per user in the engine's database, which it doesn't have (DATABASE_URL).")
+    try:
+        database.put_user_settings(user.id, identity.seal("settings", values) if values else None)
+    except database.NoDatabase as e:
+        raise CommandError(f"{e} The setting wasn't saved.") from None
 
 
 def _override(name: str):
-    return lambda: name in _overrides
+    return lambda: name in user_settings()
 
 
 # ---- What the assistant uses (assist.py reads these, not settings) ----
 
 
 def litellm_url() -> str:
-    return _overrides.get("LiteLLMURL", settings.LITELLM_BASE_URL)
+    return user_settings().get("LiteLLMURL", settings.LITELLM_BASE_URL)
 
 
 def litellm_key() -> str:
-    if "LiteLLMKey" in _overrides:
-        return _overrides["LiteLLMKey"]
+    mine = user_settings()
+    if "LiteLLMKey" in mine:
+        return mine["LiteLLMKey"]
     # .env's key goes only to .env's address.
-    return "" if "LiteLLMURL" in _overrides else settings.LITELLM_API_KEY
+    return "" if "LiteLLMURL" in mine else settings.LITELLM_API_KEY
 
 
 def assist_model() -> str:
-    return _overrides.get("Assistant.Model", settings.ASSIST_MODEL)
+    return user_settings().get("Assistant.Model", settings.ASSIST_MODEL)
 
 
 def assistant_on() -> bool:
-    return _overrides.get("Assistant.Enabled", True)
+    return user_settings().get("Assistant.Enabled", True)
 
 
 def _set(name: str, message: Callable[[Any], str] | None = None):
     def set_value(value):
-        _overrides[name] = value
+        user_settings()[name] = value
         return message(value) if message else None
     return set_value
 
@@ -102,8 +151,9 @@ def _set_url(value: str) -> str:
     url = value.strip().rstrip("/")
     if not re.match(r"^https?://[^\s/]+", url):
         raise CommandError("b.LiteLLMURL takes an address starting http:// or https://.")
-    _overrides["LiteLLMURL"] = url
-    _overrides.pop("LiteLLMKey", None)
+    mine = user_settings()
+    mine["LiteLLMURL"] = url
+    mine.pop("LiteLLMKey", None)
     return (
         f"The assistant now uses {url}. Set b.LiteLLMKey too: the key in the engine's .env goes only to the "
         "address there."
@@ -111,8 +161,9 @@ def _set_url(value: str) -> str:
 
 
 def _reset() -> str:
-    names = sorted(_overrides)
-    _overrides.clear()
+    mine = user_settings()
+    names = sorted(mine)
+    mine.clear()
     return f"Forgot {', '.join('b.' + n for n in names)}: back to the engine's .env." if names else "Nothing was set by command."
 
 
@@ -130,9 +181,12 @@ BUILT_IN = [
         get=assist_model, set=_set("Assistant.Model"), overridden=_override("Assistant.Model"),
     ),
     Command(
-        "Assistant.Enabled", "setting", "Whether the AI assistant is on, for everyone using this engine.", type="boolean",
+        "Assistant.Enabled", "setting",
+        "Whether the AI assistant is on: for you, or for everyone when the engine signs no one in.", type="boolean",
         get=assistant_on, overridden=_override("Assistant.Enabled"),
-        set=_set("Assistant.Enabled", lambda on: "The assistant is on." if on else "The assistant is off for everyone using this engine."),
+        set=_set("Assistant.Enabled", lambda on: "The assistant is on." if on else (
+            "The assistant is off for you." if identity.signed_in() else "The assistant is off for everyone using this engine."
+        )),
     ),
     Command("Settings.Reset", "action", "Forget every setting set by command: back to the engine's .env.", run=_reset),
 ]
@@ -171,7 +225,7 @@ def run(name: str, value: Any = None, has_value: bool = False) -> str:
     if command.kind == "action":
         if has_value:
             raise CommandError(f"{full} is an action: it takes no value.")
-        return command.run() or "Done."
+        return _saving(lambda: command.run() or "Done.")
     if not has_value:
         current = command.get()
         if command.secret:
@@ -182,4 +236,23 @@ def run(name: str, value: Any = None, has_value: bool = False) -> str:
         raise CommandError(f"{full} takes {'quoted text' if command.type == 'string' else 'a number' if command.type == 'number' else 'true or false'}.")
     if command.values and value not in command.values:
         raise CommandError(f"{full} takes one of {', '.join(command.values)}.")
-    return command.set(value) or (f"{full} = ••••" if command.secret else f"{full} = {json.dumps(value)}")
+    return _saving(lambda: command.set(value) or (f"{full} = ••••" if command.secret else f"{full} = {json.dumps(value)}"))
+
+
+def _saving(change: Callable[[], str]) -> str:
+    """Run a command that may change settings; signed in, save the user's
+    afterwards (and undo the change if they can't be saved)."""
+    user = identity.signed_in()
+    if user is None:
+        return change()
+    mine = user_settings()
+    before = dict(mine)
+    message = change()
+    if mine != before:
+        try:
+            _save(user, mine)
+        except CommandError:
+            mine.clear()
+            mine.update(before)
+            raise
+    return message
