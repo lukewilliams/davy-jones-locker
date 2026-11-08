@@ -303,6 +303,17 @@ def test_the_id_tokens_claims_are_checked(oidc, provider, claims, says):
     assert refused.status_code == 400 and says in refused.text
 
 
+def test_preferred_username_counts_only_when_named(oidc, provider, monkeypatch):
+    """Some providers let users choose their preferred_username, so it's the
+    address ALLOWED_USERS matches only where OIDC_EMAIL_CLAIM names it."""
+    provider.claims = {"email": None, "preferred_username": "ann@example.com", "groups": []}
+    refused = sign_in(oidc, provider)
+    assert refused.status_code == 403 and "djl_session" not in oidc.cookies
+    monkeypatch.setattr(settings, "OIDC_EMAIL_CLAIM", "preferred_username")
+    assert sign_in(oidc, provider).status_code == 302
+    assert oidc.get("/health").json()["user"]["email"] == "ann@example.com"
+
+
 def test_a_callback_without_its_sign_in_is_refused(oidc, provider):
     started = oidc.get("/auth/login")
     query = provider.authorize(started.headers["location"], "ann@example.com")

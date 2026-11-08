@@ -449,10 +449,11 @@ class OIDC(Identity):
         return claims
 
     def user(self, claims: dict) -> User:
-        if settings.OIDC_EMAIL_CLAIM:
-            name = settings.OIDC_EMAIL_CLAIM
-        else:
-            name = "email" if claims.get("email") else "preferred_username"
+        # `email` unless OIDC_EMAIL_CLAIM names another. Never
+        # `preferred_username` by default: some providers let the user choose
+        # it, so it's an address only where the provider says so (a company
+        # directory's UPN, say), which the engine's settings must say.
+        name = settings.OIDC_EMAIL_CLAIM or "email"
         if name == "email" and claims.get("email_verified") is False:
             raise IdentityError("The sign-in provider says this account's email address isn't verified.")
         groups = claims.get(settings.OIDC_GROUPS_CLAIM) or []

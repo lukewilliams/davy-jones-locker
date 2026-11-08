@@ -1,0 +1,4 @@
+node_modules/
+dist/
+# DuckDB extensions, fetched by npm run extensions (before dev and build)
+public/duckdb-extensions/

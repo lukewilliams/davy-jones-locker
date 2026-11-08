@@ -1,0 +1,254 @@
+# Publishes a release when its tags are pushed: the npm packages, the engine
+# on PyPI, the base images (images.yml), and the GitHub release, from the
+# tagged commit.
+#
+#   seamonster-v<version>         npm: seamonster
+#   davy-jones-locker-v<version>  npm: davy-jones-locker (the app shell)
+#                                 PyPI: davy-jones-locker (the engine)
+#                                 ghcr.io: the engine, runner and node worker
+#
+# When one commit has several release tags, the run for the first in sorted
+# order publishes them all, and the others stop. Versions already published
+# are skipped, so a run can be repeated. Each release's text is the tagged
+# commit's release-notes/<tag>.md.
+name: Publish
+
+on:
+  push:
+    tags:
+      - 'seamonster-v*'
+      - 'davy-jones-locker-v*'
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Plan the release
+    if: github.repository == 'lukewilliams/davy-jones-locker'
+    runs-on: ubuntu-latest
+    outputs:
+      lead: ${{ steps.plan.outputs.lead }}
+      tags: ${{ steps.plan.outputs.tags }}
+      seamonster: ${{ steps.plan.outputs.seamonster }}
+      davy-jones-locker: ${{ steps.plan.outputs.davy-jones-locker }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The release tags on this commit, each checked against the versions
+      # in the tree and its notes.
+      - name: Plan
+        id: plan
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}.git
+        run: |
+          set -euo pipefail
+          # A lightweight tag's line is its commit; an annotated tag's
+          # peeled line (^{}) is. Keep the release tags on this commit.
+          tags=$(git ls-remote --tags "$REPO_URL" \
+            | awk -v sha="$SHA" '
+                { ref = $2; sub("^refs/tags/", "", ref) }
+                ref ~ /\^\{\}$/ { sub(/\^\{\}$/, "", ref); peeled[ref] = $1; next }
+                { plain[ref] = $1 }
+                END { for (r in plain) if (((r in peeled) ? peeled[r] : plain[r]) == sha) print r }' \
+            | grep -E '^(seamonster|davy-jones-locker)-v[0-9]+\.[0-9]+\.[0-9]+$' | LC_ALL=C sort || true)
+          if ! grep -qxF "$REF_NAME" <<< "$tags"; then
+            echo "::error::$REF_NAME isn't a release tag on $SHA."
+            exit 1
+          fi
+          lead=$(head -n 1 <<< "$tags")
+          if [ "$lead" != "$REF_NAME" ]; then
+            echo "$lead is on this commit too, and its run publishes the release: nothing to do here."
+            echo "lead=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          check() {
+            if [ "$2" != "$version" ]; then
+              echo "::error::The tag $tag says $version, but $1 says $2."
+              exit 1
+            fi
+          }
+          for tag in $tags; do
+            case "$tag" in
+              seamonster-v*) package=seamonster ;;
+              davy-jones-locker-v*) package=davy-jones-locker ;;
+            esac
+            version="${tag#"$package"-v}"
+            if [ "$package" = seamonster ]; then
+              check seamonster/package.json "$(jq -r .version seamonster/package.json)"
+            else
+              check davy-jones-locker/app/package.json "$(jq -r .version davy-jones-locker/app/package.json)"
+              check davy-jones-locker/engine/pyproject.toml \
+                "$(sed -n 's/^version = "\(.*\)"/\1/p' davy-jones-locker/engine/pyproject.toml)"
+            fi
+            notes="release-notes/$tag.md"
+            if [ ! -f "$notes" ]; then
+              echo "::error::No release notes for $tag: $notes isn't in the tagged commit."
+              exit 1
+            fi
+            if head -n 5 "$notes" | grep -qi unreleased; then
+              echo "::error::$notes still says it's unreleased."
+              exit 1
+            fi
+            echo "$package=$version" >> "$GITHUB_OUTPUT"
+            echo "Releasing $package $version."
+          done
+          echo "lead=true" >> "$GITHUB_OUTPUT"
+          echo "tags=$(tr '\n' ' ' <<< "$tags")" >> "$GITHUB_OUTPUT"
+
+  npm:
+    name: npm
+    needs: plan
+    if: needs.plan.outputs.lead == 'true'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write        # trusted publishing, and the provenance statement
+    env:
+      SEAMONSTER: ${{ needs.plan.outputs.seamonster }}
+      DAVY_JONES_LOCKER: ${{ needs.plan.outputs.davy-jones-locker }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Trusted publishing needs npm 11.5.1 or later.
+      - name: Install a known npm
+        run: npm install -g npm@11.21.2
+
+      # seamonster first, since the shell's peer range may need it. The
+      # committed dist/ is published as it is.
+      - name: Publish
+        run: |
+          set -euo pipefail
+          publish() {
+            [ -n "$2" ] || return 0
+            if [ "$(npm view "$1@$2" version 2>/dev/null)" = "$2" ]; then
+              echo "$1 $2 is on npm already."
+              return 0
+            fi
+            (cd "$3" && npm publish --ignore-scripts --dry-run && npm publish --ignore-scripts --access public)
+          }
+          publish seamonster "$SEAMONSTER" seamonster
+          publish davy-jones-locker "$DAVY_JONES_LOCKER" davy-jones-locker/app
+
+  build-engine:
+    name: Build the engine for PyPI
+    needs: plan
+    if: needs.plan.outputs.lead == 'true' && needs.plan.outputs.davy-jones-locker != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+
+      # The pinned build tools, without an isolated environment.
+      - name: Build
+        working-directory: davy-jones-locker/engine
+        env:
+          VERSION: ${{ needs.plan.outputs.davy-jones-locker }}
+        run: |
+          python -m pip install --require-hashes -r build-requirements.txt
+          python -m build --no-isolation
+          # Exactly this version's sdist and wheel, nothing else.
+          found=$(cd dist && printf '%s\n' * | LC_ALL=C sort)
+          expected=$(printf '%s\n' "davy_jones_locker-$VERSION-py3-none-any.whl" "davy_jones_locker-$VERSION.tar.gz")
+          echo "$found"
+          if [ "$found" != "$expected" ]; then
+            echo "::error::The build made $(tr '\n' ' ' <<< "$found"), not $VERSION's sdist and wheel alone."
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: engine-dist
+          path: davy-jones-locker/engine/dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  pypi:
+    name: PyPI
+    needs: [plan, build-engine]
+    if: needs.plan.outputs.lead == 'true' && needs.plan.outputs.davy-jones-locker != ''
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write        # trusted publishing
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: engine-dist
+          path: dist/
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: dist/
+          skip-existing: true
+
+  images:
+    name: Images
+    needs: plan
+    if: needs.plan.outputs.lead == 'true' && needs.plan.outputs.davy-jones-locker != ''
+    uses: ./.github/workflows/images.yml
+    with:
+      version: ${{ needs.plan.outputs.davy-jones-locker }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+
+  release:
+    name: GitHub release
+    needs: [plan, npm, build-engine, pypi, images]
+    # Once everything else has published, or had nothing to publish.
+    if: >-
+      !cancelled() && needs.plan.outputs.lead == 'true' && needs.npm.result == 'success' &&
+      (needs.pypi.result == 'success' || needs.pypi.result == 'skipped') &&
+      (needs.images.result == 'success' || needs.images.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # create the release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # seamonster first: the framework's notes link to its release.
+      - name: Create the releases from the tagged commit's notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAGS: ${{ needs.plan.outputs.tags }}
+        run: |
+          set -euo pipefail
+          for tag in $(tr ' ' '\n' <<< "$TAGS" | LC_ALL=C sort -r); do
+            case "$tag" in
+              seamonster-v*) package=seamonster ;;
+              davy-jones-locker-v*) package=davy-jones-locker ;;
+              *) echo "::error::'$tag' isn't a release tag."; exit 1 ;;
+            esac
+            if gh release view "$tag" > /dev/null 2>&1; then
+              echo "The release $tag exists already."
+              continue
+            fi
+            gh release create "$tag" --verify-tag --title "$package ${tag#"$package"-v}" \
+              --notes-file "release-notes/$tag.md"
+          done

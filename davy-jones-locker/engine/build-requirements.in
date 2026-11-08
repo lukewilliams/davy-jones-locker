@@ -1,0 +1,7 @@
+# What publish.yml builds the engine's sdist and wheel with, installed by hash
+# and used with --no-isolation, so the build can't pull in newer versions.
+# Compile to build-requirements.txt (pinned, with hashes):
+#   uv pip compile build-requirements.in --generate-hashes --python-version 3.12 --python-platform linux -o build-requirements.txt
+# hatchling's version is the one pyproject.toml's [build-system] gets.
+build==1.6.1
+hatchling==1.33.0

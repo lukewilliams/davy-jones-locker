@@ -1,0 +1,4 @@
+.env
+runner.env
+__pycache__
+*.pyc

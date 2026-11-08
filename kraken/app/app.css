@@ -1,0 +1,8 @@
+/* KRAKEN's shell only: gives the window the full viewport to fill. */
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}

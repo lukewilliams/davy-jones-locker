@@ -11,6 +11,7 @@
 // DuckDB checks each extension's signature when it loads it, so a copy that
 // isn't DuckDB's own won't load.
 
+import { spawnSync } from 'node:child_process'
 import { mkdir, rename, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { gzipSync } from 'node:zlib'
@@ -22,6 +23,16 @@ const folder = process.argv[2]
 if (!folder || process.argv.length > 3) {
   console.error('Usage: davy-jones-locker-extensions <folder the app serves, e.g. public/duckdb-extensions>')
   process.exit(2)
+}
+
+// Node's fetch ignores HTTPS_PROXY unless NODE_USE_ENV_PROXY is set (Node
+// 22.21 and later), so behind a proxy this runs itself again with it set.
+if ((process.env.HTTPS_PROXY || process.env.https_proxy) && !process.env.NODE_USE_ENV_PROXY) {
+  const { status } = spawnSync(process.execPath, process.argv.slice(1), {
+    stdio: 'inherit',
+    env: { ...process.env, NODE_USE_ENV_PROXY: '1' },
+  })
+  process.exit(status ?? 1)
 }
 
 const exists = (path) => stat(path).then(() => true, () => false)

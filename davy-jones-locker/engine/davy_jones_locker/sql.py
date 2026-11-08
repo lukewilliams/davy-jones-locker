@@ -9,6 +9,11 @@ the functions that open connections or run SQL given as text, nor the spatial
 extension's file readers (the lockdown already refuses them; geo files are
 read in the browser).
 
+The query database's credentials go in a temporary DuckDB secret, never in
+the ATTACH string: DuckDB shows that string to any query, in
+duckdb_databases().path and the allowed_paths setting, and a secret's
+password only as "redacted" (and, with settings locked, never unredacted).
+
 The spatial extension is loaded before the lockdown, with x, y axis order
 whatever a CRS's official order (geometry_always_xy), as in the browser.
 
@@ -57,8 +62,9 @@ GEOMETRY_TYPES = {
     "MULTILINESTRING": "MultiLineString", "MULTIPOLYGON": "MultiPolygon", "GEOMETRYCOLLECTION": "GeometryCollection",
 }
 
-# Functions that open connections or run SQL given as text.
-BLOCKED_FUNCTIONS = {"query", "query_table"}
+# Functions that open connections or run SQL given as text, and the secrets'
+# own listings (they show no password, but nothing needs them).
+BLOCKED_FUNCTIONS = {"query", "query_table", "duckdb_secrets", "which_secret"}
 BLOCKED_PREFIXES = ("postgres_",)
 # The spatial extension's readers: files and URLs (through GDAL's drivers).
 FILE_FUNCTIONS = {"st_read", "st_read_meta", "st_readosm", "st_readshp", "shapefile_meta"}
@@ -83,6 +89,27 @@ def scrub(message: str) -> str:
         if password:
             message = message.replace(password, "****")
     return re.sub(r"(password\s*=\s*)\S+", r"\1****", message, flags=re.IGNORECASE)
+
+
+# libpq's names for what the secret holds, and DuckDB's for the same.
+SECRET_PARAMS = {"host": "HOST", "port": "PORT", "dbname": "DATABASE", "user": "USER",
+                 "password": "PASSWORD"}
+
+
+def attach_statements(url: str) -> list[str]:
+    """The query database attached read-only as CATALOG, its connection in a
+    temporary secret. Anything else in the URL (sslmode and the like) stays in
+    the ATTACH string, which then holds no password."""
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+
+    params = conninfo_to_dict(url)
+    secret = {SECRET_PARAMS[k]: str(v) for k, v in params.items() if k in SECRET_PARAMS}
+    rest = make_conninfo(**{k: v for k, v in params.items() if k not in SECRET_PARAMS})
+    options = ", ".join(f"{k} {literal(v)}" for k, v in secret.items())
+    return [
+        f"CREATE TEMPORARY SECRET flow_query_db (TYPE postgres{', ' + options if options else ''})",
+        f"ATTACH {literal(rest)} AS {CATALOG} (TYPE postgres, SECRET flow_query_db, READ_ONLY)",
+    ]
 
 
 def quote(name: str) -> str:
@@ -159,8 +186,9 @@ class Session:
         if settings.QUERY_DATABASE_URL:
             try:
                 con.execute("LOAD postgres")
-                con.execute(f"ATTACH {literal(settings.QUERY_DATABASE_URL)} AS {CATALOG} (TYPE postgres, READ_ONLY)")
-            except duckdb.Error as e:
+                for statement in attach_statements(settings.QUERY_DATABASE_URL):
+                    con.execute(statement)
+            except (duckdb.Error, ValueError) as e:
                 con.close()
                 log.warning("Can't attach the query database: %s", scrub(str(e)))
                 raise QueryError(
@@ -344,7 +372,7 @@ def _load_spatial(con: duckdb.DuckDBPyConnection) -> bool:
             _spatial_missing = True
             log.warning(
                 "DuckDB's spatial extension couldn't load, so spatial SQL won't run on the engine (%s). "
-                "Install it once: python -c \"import duckdb; duckdb.sql('INSTALL spatial')\"",
+                "Install it once: python -m davy_jones_locker.extensions",
                 str(e).splitlines()[0],
             )
         return False

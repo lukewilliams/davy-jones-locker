@@ -542,6 +542,43 @@ async def require_user(request: Request, call_next):
         identity.current_user.reset(token)
 
 
+# ---- Signing no one in: this machine's names only ----
+
+LOOPBACK_NAMES = {"localhost", "127.0.0.1", "::1"}
+
+
+def host_name(host: str) -> str:
+    """The Host header without its port: `localhost:8130` → `localhost`,
+    `[::1]:9130` → `::1`."""
+    host = host.strip().lower()
+    if host.startswith("["):
+        return host[1:].split("]", 1)[0]
+    return host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+
+
+def local_host_allowed(host: str) -> bool:
+    name = host_name(host)
+    return (name in LOOPBACK_NAMES or name.endswith(".localhost") or name == settings.PUBLIC_HOST.lower()
+            or name in settings.LOCAL_ALLOWED_HOSTS)
+
+
+async def local_hosts_only(request: Request, call_next):
+    """While the engine signs no one in, everyone who reaches it is the local
+    user, so it answers only to this machine's own names. A web page can
+    point a name of its own at 127.0.0.1 (DNS rebinding) and then call the
+    engine as its own origin, X-Requested-By and all; its requests carry that
+    name as their Host, and are refused here."""
+    if provider.name == "none" and not local_host_allowed(request.headers.get("host", "")):
+        log.warning("Refused %s %s for Host %r: the engine signs no one in.", request.method, request.url.path,
+                    request.headers.get("host", "")[:100])
+        return error(
+            "This engine signs no one in, so it answers only on this machine (localhost). "
+            "To use it under another name, add that name to LOCAL_ALLOWED_HOSTS; to reach it from "
+            "elsewhere, turn sign-in on.", 403,
+        )
+    return await call_next(request)
+
+
 # ---- Refusing the sandboxes ----
 
 def _address(text: str):
@@ -594,6 +631,7 @@ def create_app(
     app = FastAPI(title=title, lifespan=lifespan)
     # The last added runs first: the sandboxes are refused before anything.
     app.middleware("http")(require_user)
+    app.middleware("http")(local_hosts_only)
     app.middleware("http")(refuse_sandboxes)
     app.add_exception_handler(database.NoDatabase, no_database)
     app.add_exception_handler(runner.RunnerUnavailable, no_runner)

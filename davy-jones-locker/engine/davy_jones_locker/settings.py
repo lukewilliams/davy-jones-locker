@@ -41,8 +41,9 @@ OIDC_DISCOVERY_URL = os.environ.get("OIDC_DISCOVERY_URL") or ""
 OIDC_CLIENT_ID = os.environ.get("OIDC_CLIENT_ID") or ""
 OIDC_CLIENT_SECRET = os.environ.get("OIDC_CLIENT_SECRET") or ""
 OIDC_SCOPES = os.environ.get("OIDC_SCOPES") or "openid email profile"
-# The claim holding the address ALLOWED_USERS matches (empty: `email`, then
-# `preferred_username`), and the one holding groups.
+# The claim holding the address ALLOWED_USERS matches (empty: `email`; set
+# `preferred_username` only where the provider, not the user, sets it), and
+# the one holding groups.
 OIDC_EMAIL_CLAIM = os.environ.get("OIDC_EMAIL_CLAIM") or ""
 OIDC_GROUPS_CLAIM = os.environ.get("OIDC_GROUPS_CLAIM") or "groups"
 
@@ -62,6 +63,12 @@ IDENTITY_LOGOUT_URL = os.environ.get("IDENTITY_LOGOUT_URL") or ""
 
 # What /health reports as this engine's address.
 PUBLIC_HOST = os.environ.get("PUBLIC_HOST") or "engine"
+
+# While the engine signs no one in, the only Host names it answers: these,
+# PUBLIC_HOST, localhost (and *.localhost), 127.0.0.1 and ::1. Any other is a
+# page that has pointed its own name at this machine (DNS rebinding), or a
+# request from another machine: both are refused.
+LOCAL_ALLOWED_HOSTS = [h.strip().lower() for h in (os.environ.get("LOCAL_ALLOWED_HOSTS") or "").split(",") if h.strip()]
 PORT = _int("PORT", 3000)
 
 # Postgres holding the engine's own tables (graphs, stored files, runs), in

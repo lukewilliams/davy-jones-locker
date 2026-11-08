@@ -42,7 +42,7 @@ and its image starts from the framework's ([Dockerfile](Dockerfile)), adding
 that entry point:
 
 ```dockerfile
-FROM ghcr.io/lukewilliams/davy-jones-locker-engine:0.4.0
+FROM ghcr.io/lukewilliams/davy-jones-locker-engine:0.4.1
 COPY main.py ./
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "3000"]
 ```
@@ -57,7 +57,7 @@ published to GitHub's container registry for each release, from 0.2.0, for
 | `ghcr.io/lukewilliams/davy-jones-locker-runner` | [runner/Dockerfile](runner/Dockerfile) |
 | `ghcr.io/lukewilliams/davy-jones-locker-node-worker` | [nodeworker/Dockerfile](nodeworker/Dockerfile) |
 
-Each is tagged with the version (`0.4.0`) and its minor (`0.4`); there's no
+Each is tagged with the version (`0.4.1`) and its minor (`0.4`); there's no
 `latest`, so an app says which version it builds on. Or build them yourself
 from this folder (`docker build -t davy-jones-locker-engine .`, and `-f
 runner/Dockerfile` or `-f nodeworker/Dockerfile` for the others), as
@@ -89,7 +89,8 @@ reports, default `engine`). `SANDBOX_HOSTS` names more hosts whose requests
 the engine refuses (see Safeguards). `RUNNER_PACKAGES_FILE` names an app's
 own runner `requirements.in` inside the engine's image, when its runner adds
 libraries (see Python and geometry); the assistant reads it.
-`LOOP_MAX_CONCURRENCY` (4) caps a Loop's runs at once whatever its node asks,
+`LOCAL_ALLOWED_HOSTS` lists more Host names an engine that signs no one in
+answers to (see Safeguards). `LOOP_MAX_CONCURRENCY` (4) caps a Loop's runs at once whatever its node asks,
 `JOBS_AT_ONCE` (4) the jobs running at once, and `JOB_KEEP_SECONDS` (3600)
 how long a finished job's result is kept. Sign-in's settings are in
 [Sign-in](#sign-in).
@@ -144,7 +145,7 @@ no CORS), so a site the user visits can't act for them.
 | `SECRET_KEY` | 32 or more random characters: encrypts the session cookie and each user's saved settings. Changing it signs everyone out and loses saved settings |
 | `SESSION_HOURS` | how long a sign-in lasts (8) |
 | `OIDC_SCOPES` | `openid email profile` |
-| `OIDC_EMAIL_CLAIM` | the claim `ALLOWED_USERS` matches; empty: `email`, else `preferred_username`. An `email` the provider says isn't verified is refused |
+| `OIDC_EMAIL_CLAIM` | the claim `ALLOWED_USERS` matches; empty: `email`. Name `preferred_username` only where the provider sets it, not the user (a company directory's UPN). An `email` the provider says isn't verified is refused |
 | `OIDC_GROUPS_CLAIM` | the claim with the user's groups (`groups`) |
 
 `GET /auth/login?next=/path` sends the browser to the provider with a state,
@@ -499,6 +500,15 @@ node kinds run in a third, trusted, but handling what users send.
 can't act for a user (see Sign-in). Sessions are encrypted cookies the page
 can't read; no token reaches the browser.
 
+**Signing no one in: this machine's names only.** With `IDENTITY=none`
+(local development), everyone who reaches the engine is the local user, so
+it answers only requests whose Host is `localhost` (or `*.localhost`),
+`127.0.0.1`, `::1`, `PUBLIC_HOST`, or a name in `LOCAL_ALLOWED_HOSTS`. Any
+other is refused (403). That's a page that has pointed its own name at this
+machine (DNS rebinding) to call the engine as its own origin, or another
+machine reaching it by address. Signed-in engines don't check: their
+cookies are bound to their own name.
+
 **Refusing the sandboxes.** Every request from the runner or the node worker
 is refused (403), whatever it asks: code runs there, and nothing it does may
 use the engine (its database, saved graphs, AI budget, or the node kinds it
@@ -514,7 +524,11 @@ down: no file access, no new extensions or attachments, settings frozen. That
 doesn't stop `postgres_scan()` connecting to any server by connection string,
 so a query must also be one SELECT that calls none of the functions that open
 connections or run SQL given as text (`postgres_*`, `query`, `query_table`),
-checked with DuckDB's own parser. Queries stop after `QUERY_TIMEOUT_SECONDS`
+checked with DuckDB's own parser. The query database's credentials are
+attached through a temporary DuckDB secret, never the `ATTACH` string,
+because DuckDB shows that string to any query (`duckdb_databases()` and the
+`allowed_paths` setting). The secret shows its password only as redacted,
+and the secrets' listings are refused anyway. Queries stop after `QUERY_TIMEOUT_SECONDS`
 and are held to `QUERY_MEMORY_LIMIT`.
 
 **Spatial SQL.** DuckDB's spatial extension is installed with the image and
@@ -609,7 +623,7 @@ that work with the framework's pandas and pyarrow), compile it with hashes
 as the framework's is, and install it in an image built on the runner's:
 
 ```dockerfile
-FROM ghcr.io/lukewilliams/davy-jones-locker-runner:0.4.0
+FROM ghcr.io/lukewilliams/davy-jones-locker-runner:0.4.1
 USER root
 COPY runner/requirements.txt /tmp/app-requirements.txt
 RUN pip install --no-cache-dir --require-hashes -r /tmp/app-requirements.txt && rm /tmp/app-requirements.txt
@@ -663,8 +677,12 @@ Install DuckDB's extensions once, as the image does at build: the engine
 locks DuckDB down and can't install them itself.
 
 ```
-python -c "import duckdb; duckdb.sql('INSTALL postgres'); duckdb.sql('INSTALL spatial')"
+python -m davy_jones_locker.extensions
 ```
+
+It fetches them over HTTPS, following `HTTPS_PROXY`. DuckDB's own `INSTALL
+spatial` would work too, except behind a proxy: it fetches over plain HTTP
+and doesn't use one.
 
 The tests need no database:
 

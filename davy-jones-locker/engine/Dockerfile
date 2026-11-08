@@ -14,8 +14,10 @@ RUN pip install --no-cache-dir --require-hashes -r requirements.txt
 RUN useradd --system --uid 10001 --create-home --home-dir /home/engine engine
 USER engine
 # DuckDB's postgres and spatial extensions, fetched now: at run time DuckDB is
-# locked down and can't install anything.
-RUN python -c "import duckdb; duckdb.sql('INSTALL postgres'); duckdb.sql('INSTALL spatial')"
+# locked down and can't install anything. Over HTTPS, so a build behind a
+# proxy works (DuckDB's own INSTALL fetches over plain HTTP).
+COPY davy_jones_locker/__init__.py davy_jones_locker/extensions.py ./davy_jones_locker/
+RUN python -m davy_jones_locker.extensions
 
 COPY davy_jones_locker ./davy_jones_locker
 # The packages Python scripts can import, which the AI assistant tells the model.

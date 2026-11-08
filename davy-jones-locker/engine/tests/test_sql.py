@@ -4,6 +4,7 @@ import http.server
 import io
 import json
 import math
+import os
 import struct
 import threading
 
@@ -12,7 +13,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from davy_jones_locker import sql
+from davy_jones_locker import settings, sql
 
 KML = b"""<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2"><Document>
@@ -321,3 +322,38 @@ def test_without_spatial_the_crs_still_travels(monkeypatch, geoparquet):
     columns = geo_of(data)
     assert crs_code(columns["geometry"]) == "EPSG:7855"
     assert columns["geometry"]["geometry_types"] == []
+
+
+@pytest.mark.parametrize("url", [
+    "postgresql://reader:pw-in-url@db.example:5432/flow?sslmode=require",
+    "host=db.example port=5432 dbname=flow user=reader password='pw in url' sslmode=require",
+])
+def test_the_query_databases_password_stays_out_of_the_attach_string(url):
+    """DuckDB shows the ATTACH string to any query (duckdb_databases().path,
+    the allowed_paths setting); the credentials go in a secret, whose
+    password it shows only as redacted."""
+    create, attach = sql.attach_statements(url)
+    assert "pw" not in attach and "reader" not in attach and "sslmode=require" in attach
+    assert "PASSWORD 'pw" in create and create.startswith("CREATE TEMPORARY SECRET")
+
+
+@pytest.mark.parametrize("query", ["SELECT * FROM duckdb_secrets()", "SELECT * FROM which_secret('x', 'postgres')"])
+def test_check_query_refuses_the_secrets_listings(query):
+    with sql.Session() as session, pytest.raises(sql.QueryError):
+        session.check_query(query)
+
+
+QUERY_DB = os.environ.get("ENGINE_TEST_QUERY_DATABASE_URL", "")
+
+
+@pytest.mark.skipif(not QUERY_DB, reason="needs a Postgres: ENGINE_TEST_QUERY_DATABASE_URL, with a password")
+def test_no_query_can_read_the_query_databases_password(monkeypatch):
+    from urllib.parse import urlsplit
+
+    password = urlsplit(QUERY_DB).password
+    assert password, "ENGINE_TEST_QUERY_DATABASE_URL needs a password to look for"
+    monkeypatch.setattr(settings, "QUERY_DATABASE_URL", QUERY_DB)
+    for query in ("SELECT * FROM duckdb_databases()", "SELECT * FROM duckdb_settings()"):
+        with sql.Session() as session:
+            session.check_query(query)
+            assert password not in str(session.con.execute(query).fetchall())
