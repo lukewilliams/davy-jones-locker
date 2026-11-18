@@ -5,11 +5,11 @@ var u = {
 	columnKey: "col_index",
 	columnLabel: "col_label",
 	value: "value"
-};
-function d(e, t) {
-	return typeof e == "number" && typeof t == "number" ? e - t : String(e).localeCompare(String(t));
+}, d = (e) => typeof e == "number" || typeof e == "bigint";
+function f(e, t) {
+	return d(e) && d(t) ? e < t ? -1 : +(e > t) : String(e).localeCompare(String(t));
 }
-function f(e, t = {}) {
+function p(e, t = {}) {
 	let { meta: n = [], ...r } = t, i = {
 		...u,
 		...r
@@ -25,11 +25,11 @@ function f(e, t = {}) {
 		Object.keys(c).length !== 0 && (s.has(r) || s.set(r, {}), s.get(r)[e] = c);
 	}
 	return {
-		columns: [...a].sort((e, t) => d(e[0], t[0])).map(([e, t]) => ({
+		columns: [...a].sort((e, t) => f(e[0], t[0])).map(([e, t]) => ({
 			key: e,
 			label: t
 		})),
-		rows: [...o].sort((e, t) => d(e[0], t[0])).map(([e, t]) => ({
+		rows: [...o].sort((e, t) => f(e[0], t[0])).map(([e, t]) => ({
 			key: e,
 			cells: t,
 			meta: s.get(e) ?? {}
@@ -38,13 +38,13 @@ function f(e, t = {}) {
 }
 //#endregion
 //#region widgets/sheet/components/SheetTable.vue
-var p = { class: "ws-scroll" }, m = { class: "ws-sheet" }, h = {
+var m = { class: "ws-scroll" }, h = { class: "ws-sheet" }, g = {
 	key: 0,
 	class: "ws-corner"
-}, g = {
+}, _ = {
 	key: 0,
 	class: "ws-row-header"
-}, _ = ["title"], v = {
+}, v = ["title"], y = {
 	__name: "SheetTable",
 	props: {
 		columns: {
@@ -62,17 +62,17 @@ var p = { class: "ws-scroll" }, m = { class: "ws-sheet" }, h = {
 	},
 	setup(u) {
 		let d = (e, t) => e.meta?.[t.key] ?? {}, f = (e) => e ? `ws-tone-${e}` : null;
-		return (v, y) => (o(), n("div", p, [r("table", m, [r("thead", null, [r("tr", null, [u.rowHeaders ? (o(), n("th", h)) : t("", !0), (o(!0), n(e, null, s(u.columns, (e) => (o(), n("th", { key: e.key }, l(e.label), 1))), 128))])]), r("tbody", null, [(o(!0), n(e, null, s(u.rows, (r) => (o(), n("tr", { key: r.key }, [u.rowHeaders ? (o(), n("th", g, l(r.header ?? r.key), 1)) : t("", !0), (o(!0), n(e, null, s(u.columns, (e) => (o(), n("td", {
+		return (p, y) => (o(), n("div", m, [r("table", h, [r("thead", null, [r("tr", null, [u.rowHeaders ? (o(), n("th", g)) : t("", !0), (o(!0), n(e, null, s(u.columns, (e) => (o(), n("th", { key: e.key }, l(e.label), 1))), 128))])]), r("tbody", null, [(o(!0), n(e, null, s(u.rows, (r) => (o(), n("tr", { key: r.key }, [u.rowHeaders ? (o(), n("th", _, l(r.header ?? r.key), 1)) : t("", !0), (o(!0), n(e, null, s(u.columns, (e) => (o(), n("td", {
 			key: e.key,
 			title: d(r, e).tooltip,
 			class: a(f(d(r, e).tone))
-		}, [c(v.$slots, "cell", {
+		}, [c(p.$slots, "cell", {
 			row: r,
 			column: e,
 			value: r.cells[e.key],
 			meta: d(r, e)
-		}, () => [i(l(r.cells[e.key]), 1)])], 10, _))), 128))]))), 128))])])]));
+		}, () => [i(l(r.cells[e.key]), 1)])], 10, v))), 128))]))), 128))])])]));
 	}
 };
 //#endregion
-export { v as SheetTable, f as fromLongRows };
+export { y as SheetTable, p as fromLongRows };

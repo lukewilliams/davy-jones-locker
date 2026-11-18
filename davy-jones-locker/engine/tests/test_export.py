@@ -6,8 +6,11 @@ import io
 import json
 
 import pyarrow.parquet as pq
+import pytest
 
 from davy_jones_locker import executor, sql
+
+pytestmark = pytest.mark.spatial
 
 
 def export(fmt: str) -> bytes:
@@ -30,3 +33,16 @@ def test_csv_and_json_write_geometry_as_wkt():
 def test_parquet_is_geoparquet():
     geo = json.loads(pq.read_schema(io.BytesIO(export("parquet"))).metadata[sql.GEO_KEY])
     assert geo["columns"]["geometry"]["crs"]["id"] == {"authority": "EPSG", "code": 4326}
+
+
+def test_formats_and_kinds_the_server_refuses_say_where_they_run():
+    with sql.Session() as session:
+        with pytest.raises(executor.NodeError, match="xlsx files are written in the browser only: on the server, CSV, TSV, JSON and Parquet can be"):
+            target = session.output_table("sql1")
+            session.con.execute(f"CREATE TABLE {target} AS SELECT 1 AS n")
+            inputs = [{"id": "sql1", "ref": "sql1_data", "slot": None, "pin": None, "output": target}]
+            executor.run_export(session, {"id": "dataexport1", "exportFormat": "xlsx"}, inputs, {})
+        with pytest.raises(executor.NodeError, match="JavaScript nodes run only in the browser"):
+            executor.run_node(session, {"id": "javascript1", "kind": "javascript"}, [], {})
+        with pytest.raises(executor.NodeError, match="chart nodes can't run on the server: run this one in the browser"):
+            executor.run_node(session, {"id": "chart1", "kind": "chart"}, [], {})

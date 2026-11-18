@@ -9,9 +9,12 @@ const DEFAULT_COLUMNS = {
   value: 'value',
 }
 
-// Numeric keys (indices) sort numerically; anything else sorts as text.
+// Numeric keys (indices) sort numerically, BigInts included (DuckDB returns
+// BIGINT, and so row_number(), as one); anything else sorts as text.
+const isNumeric = (key) => typeof key === 'number' || typeof key === 'bigint'
+
 function compareKeys(a, b) {
-  if (typeof a === 'number' && typeof b === 'number') return a - b
+  if (isNumeric(a) && isNumeric(b)) return a < b ? -1 : a > b ? 1 : 0
   return String(a).localeCompare(String(b))
 }
 

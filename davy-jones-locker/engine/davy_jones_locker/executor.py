@@ -11,8 +11,8 @@ What runs here:
   data-export    to CSV, TSV, JSON or Parquet, returned in the result (base64)
   the app's own  in the node worker (noderunner.py), its file fields' files
                  from the stored files too
-  javascript     refused: browser only, until the engine has safeguards for it
-  anything else  can't run on the server yet
+  javascript     refused: it runs in the browser only
+  anything else  refused: the node fails, saying its kind can't run on the server
 
 Slots and pins as SEAMONSTER has them (its kindRegistry.js): a node's first
 output is read by its reference name, its kind's other slots as <id>_<slot>;
@@ -388,12 +388,12 @@ def run_node(
         return run_export(session, node, inputs, outputs)
 
     if kind == "javascript":
-        raise NodeError("JavaScript nodes run only in the browser: the engine won't run them until it has safeguards for them.")
+        raise NodeError("JavaScript nodes run only in the browser: run this one there.")
 
     if kind in noderunner.KINDS:
         return run_app_kind(session, noderunner.KINDS[kind], node, inputs, outputs, base)
 
-    raise NodeError(f"{kind} nodes can't run on the server yet.")
+    raise NodeError(f"{kind} nodes can't run on the server: run this one in the browser.")
 
 
 def run_app_kind(session: sql.Session, kind, node: dict, inputs: list[dict], outputs: dict, base: str | None = None) -> dict:
@@ -490,7 +490,7 @@ def run_export(session: sql.Session, node: dict, inputs: list[dict], outputs: di
     typed = (node.get("exportFilename") or "").strip() or "export"
     fmt = node.get("exportFormat") or format_from_name(typed) or "csv"
     if fmt not in WRITERS:
-        raise NodeError(f"{fmt} files can't be written on the server yet: CSV, TSV, JSON and Parquet can.")
+        raise NodeError(f"{fmt} files are written in the browser only: on the server, CSV, TSV, JSON and Parquet can be.")
     content_type, extension = WRITERS[fmt]
     filename = typed if format_from_name(typed) == fmt else f"{typed}.{extension}"
     data = session.parquet(table) if fmt == "parquet" else write(fmt, session.arrow(table, geometry_as_text=True))

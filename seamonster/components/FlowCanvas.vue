@@ -9,6 +9,7 @@ import FlowWire from './FlowWire.vue'
 import FlowConnectionLine from './FlowConnectionLine.vue'
 import { FLOW_GRAPH } from '../lib/flowGraph.js'
 import { NODE_KIND_DRAG_TYPE, isKnownKind } from '../lib/nodeKinds.js'
+import { isTyping } from '../lib/keyboard.js'
 
 // A wire dragged from a pin was dropped on empty canvas, with
 // { point: { x, y } in client coordinates, from: { nodeId, handleId, handleType } }.
@@ -20,6 +21,13 @@ const emit = defineEmits(['connection-dropped'])
 // One thing is selected at a time (no Shift box or Ctrl multi-select): the
 // Manage panel shows that node.
 const graph = inject(FLOW_GRAPH)
+
+// Space held pans the canvas, but never while typing. Vue Flow's own Space key
+// acts inside a text field whenever a modifier is held, and cancels the
+// keypress, so Shift+Space typed no space in the SQL editor. Releasing Space
+// always counts, so the pan ends wherever focus has gone.
+const panKey = (e) => e.code === 'Space' && (e.type === 'keyup' || !isTyping(e))
+
 const { onConnect, onConnectStart, onConnectEnd, onNodeDoubleClick } = graph.flow
 
 // Double-clicking a subnet opens it.
@@ -89,6 +97,7 @@ function onDrop(e) {
       :edges-focusable="false"
       :selection-key-code="null"
       :multi-selection-key-code="null"
+      :pan-activation-key-code="panKey"
     >
       <Background class="flow-canvas-dots" :gap="24" :size="1" />
 

@@ -355,7 +355,31 @@ class Session:
                         "This query uses spatial SQL, which this engine can't run: "
                         "its DuckDB spatial extension isn't installed."
                     ) from e
+                if not settings.QUERY_DATABASE_URL and isinstance(e, (duckdb.CatalogException, duckdb.BinderException)):
+                    named = self._query_database_tables(query)
+                    if named:
+                        raise QueryError(
+                            f"This query reads {named[0]}, but the engine has no query database, so there's no "
+                            f"{CATALOG} to read from. Set QUERY_DATABASE_URL (or DATABASE_URL) in the engine's .env, "
+                            "or wire the table in as an input."
+                        ) from e
                 raise QueryError(scrub(str(e))) from e
+
+    def _query_database_tables(self, query: str) -> list[str]:
+        """The tables `query` names in the query database (`db.schema.table`,
+        or `db.table`), as written: what an engine without one can't read."""
+        tree = json.loads(self.con.execute("SELECT json_serialize_sql(?)", [query]).fetchone()[0])
+        named: list[str] = []
+
+        def visit(node):
+            if node.get("type") != "BASE_TABLE":
+                return
+            parts = [node.get("catalog_name") or "", node.get("schema_name") or "", node.get("table_name") or ""]
+            if parts[0].lower() == CATALOG or (not parts[0] and parts[1].lower() == CATALOG):
+                named.append(".".join(part for part in parts if part))
+
+        _walk(tree, visit)
+        return named
 
 
 def _load_spatial(con: duckdb.DuckDBPyConnection) -> bool:

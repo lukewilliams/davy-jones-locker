@@ -25,10 +25,31 @@ class WorkerUnavailable(RuntimeError):
 
 def register(kinds: list[nodes.NodeKind], categories: list[nodes.NodeCategory]) -> None:
     """The app's kinds and categories (create_app's `nodes` and `categories`)."""
-    nodes.check(kinds, categories, local=settings.IS_LOCAL)
+    problems = network_problems()
+    if problems:
+        raise RuntimeError(" ".join(problems))
+    nodes.check(kinds, categories, network=network_open())
     KINDS.clear()
     KINDS.update({kind.kind: kind for kind in kinds})
     CATEGORIES[:] = categories
+
+
+def network_open() -> bool:
+    """Whether the node worker has a way out: NODE_NETWORK=open, which only
+    local development may set (network_problems)."""
+    return settings.NODE_NETWORK == "open" and settings.IS_LOCAL
+
+
+def network_problems() -> list[str]:
+    """Why NODE_NETWORK stops the engine starting, if it does."""
+    if settings.NODE_NETWORK not in ("none", "open"):
+        return [f"NODE_NETWORK is {settings.NODE_NETWORK!r}: use none (the default) or open."]
+    if settings.NODE_NETWORK == "open" and not settings.IS_LOCAL:
+        return [
+            "NODE_NETWORK=open gives the node worker a way out to any host, which is for local development only "
+            "(IS_LOCAL=true). Set NODE_NETWORK=none."
+        ]
+    return []
 
 
 def describe() -> dict:

@@ -601,7 +601,7 @@ export function createGraphRunner(sql) {
     // A kind the server runs (the engine's own, defined from GET /nodes) has
     // no `run`: it runs through the server client's runNode.
     const run = definition.run ?? (definition.where === 'server' ? (ctx) => runOnServer(ctx, definition) : null)
-    if (!run) return { error: `${definition.label} nodes can't run yet.` }
+    if (!run) return { error: `${definition.label} nodes have nothing to run them.` }
     const errors = [
       ...checkNode(node).filter((p) => p.severity === 'error').map((p) => `${p.label}: ${p.message}`),
       ...unwiredPins(node, inputs.map((i) => (i.pin ? `target:${i.pin}` : 'target-0'))),
@@ -744,16 +744,14 @@ export function createGraphRunner(sql) {
   // in. A table in a schema named like one of them (dataingest1_data.sheet1)
   // is one of that input's tables, so it's local; if the input has no such
   // table, the query fails here saying so. Read by DuckDB's own parser; a
-  // query it can't parse counts as local, and fails here saying why.
+  // query it can't parse counts as local, and fails here saying why. If the
+  // parser itself can't run (DuckDB's json extension didn't load), that error
+  // is the query's: guessing "local" would run a query meant for the server
+  // here, where it fails as a missing table.
   async function serverTables(query, inputs) {
     const text = query.trim().replace(/;+\s*$/, '')
     if (!text || !sql) return []
-    let tree
-    try {
-      tree = JSON.parse((await sql.query(`SELECT json_serialize_sql(${literal(text)})`)).rows[0][0])
-    } catch {
-      return []
-    }
+    const tree = JSON.parse((await sql.query(`SELECT json_serialize_sql(${literal(text)})`)).rows[0][0])
     if (tree.error) return []
 
     const lower = (s) => (s ?? '').toLowerCase()

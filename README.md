@@ -9,8 +9,8 @@ transforms or writes a table. Everything that is able to runs in the browser, on
 DuckDB-wasm; Python, and SQL over your own database, run on a small, locked-down
 server engine.
 
-> **Early release.** This is 0.1: the API may change between minor versions
-> until 1.0, so pin an exact version if you depend on it.
+> **Early release.** The API may change between minor versions until 1.0, so
+> pin an exact version if you depend on it.
 
 This repo holds two products, each built on the one before:
 
@@ -72,17 +72,23 @@ import 'seamonster/style.css'
 ```
 
 SQL and files now run in the browser, and the open graph is kept between
-visits. For Python nodes and SQL over a database, run the engine and its
-sandbox (Docker, from a clone of this repo):
+visits. Parquet, JSON and Excel files, time zones and spatial SQL need
+DuckDB's extensions, which your app serves itself: see
+[the shell's README](davy-jones-locker/app/README.md). For Python
+nodes and SQL over a database, run the engine and its sandbox (Docker, from a
+clone of this repo):
 
 ```
+cp davy-jones-locker/.env.example davy-jones-locker/.env
 cp davy-jones-locker/engine/.env.example davy-jones-locker/engine/.env
 cp davy-jones-locker/engine/runner.env.example davy-jones-locker/engine/runner.env
 docker compose -f davy-jones-locker/compose.yaml up -d --build
 ```
 
-The engine listens on `localhost:9001`. The browser reaches it through your
-app's own origin, so proxy `/engines/engine` to it; with Vite:
+The first file is compose's own: its `IS_LOCAL=true` lets the engine start
+without sign-in, for local development. The engine listens on
+`localhost:9001`. The browser reaches it through your app's own origin, so
+proxy `/engines/engine` to it; with Vite:
 
 ```js
 server: {
@@ -97,10 +103,16 @@ server: {
 
 A database, saved graphs and the AI assistant are settings in the engine's
 `.env`; [engine-shared](davy-jones-locker/engine-shared/README.md) runs a
-Postgres for development. See [davy-jones-locker/README.md](davy-jones-locker/README.md)
+Postgres for development. The AI assistant needs a
+[LiteLLM](https://docs.litellm.ai/) proxy of your own: it's off until the
+engine has `LITELLM_BASE_URL`, `LITELLM_API_KEY` and `ASSIST_MODEL`
+([the engine's README](davy-jones-locker/engine/README.md#ai-assistant)). See [davy-jones-locker/README.md](davy-jones-locker/README.md)
 and [the engine's README](davy-jones-locker/engine/README.md).
 
-The engine has no sign-in yet: don't expose it to the internet.
+Local development (`IS_LOCAL=true`) signs no one in, so run it on your own
+machine only. Anywhere else the engine needs sign-in (`IDENTITY`, `oidc` or
+`header`, and `ALLOWED_USERS`), and won't start without it: see
+[Sign-in](davy-jones-locker/engine/README.md#sign-in).
 
 ## Working on it
 

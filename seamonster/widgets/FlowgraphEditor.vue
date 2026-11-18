@@ -39,6 +39,10 @@ const props = defineProps({
   // The Terminal's commands: a registry from createCommandRegistry (see
   // lib/commands.js). Without it the Terminal has no command field.
   terminalCommands: { type: Object, default: null },
+  // The app's own items on the canvas's right-click menu, after the built-ins,
+  // in the menu's format (widgets/menu). They run with the context { graph },
+  // the graph the Terminal's commands get.
+  canvasMenu: { type: Array, default: () => [] },
 })
 
 const theme = computed(() => resolveTheme(props.theme))
@@ -60,7 +64,7 @@ async function focusCommandField() {
   host.value?.el?.querySelector('.flow-command-input')?.focus()
 }
 
-const { commands, canvasMenu, connectionMenu } = createFlowMenus(layout, graph)
+const { commands, canvasMenu, connectionMenu } = createFlowMenus(layout, graph, () => props.canvasMenu)
 
 const host = ref(null)
 

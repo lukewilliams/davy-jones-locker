@@ -34,12 +34,14 @@ import { reactive } from 'vue'
 // name.table). The engine's README has the API.
 //
 // The engine answers GET /health with JSON { status: 'ok', host?, port?,
-// local?, assistant?, nodes? }; anything else (an error, no answer within 3 seconds, or
+// local?, nodeNetwork?, assistant?, nodes? }; anything else (an error, no answer within 3 seconds, or
 // the dev server's index.html when there's no engine) means it's unavailable.
 // `assistant` is { model, sampleRows } when it has the AI assistant set up, and
 // `nodes` the names of the app's own node kinds (status.nodes follows it).
-// `local` is true for an engine in local development (IS_LOCAL): the app's
-// node kinds can reach the network (status.local).
+// `local` is true for an engine in local development (IS_LOCAL), which may
+// sign no one in (status.local). `nodeNetwork` is true when the app's node
+// kinds can reach the network (NODE_NETWORK=open; status.nodeNetwork). An
+// older engine doesn't say, and opened it whenever it was local.
 //
 // Sign-in is the engine's (its identity.py): `signIn` in /health names its
 // provider (null when it signs no one in) and `user` is { email, name } once
@@ -140,7 +142,7 @@ export function createEngineClient({ url, name = 'The engine', disconnected = fa
 
   const client = {
     status: reactive({
-      state: off ? 'unavailable' : 'checking', address: null, local: false, assistant: null, nodes: [], disconnected: off,
+      state: off ? 'unavailable' : 'checking', address: null, local: false, nodeNetwork: false, assistant: null, nodes: [], disconnected: off,
       signIn: null, user: null,
     }),
 
@@ -302,6 +304,7 @@ export function createEngineClient({ url, name = 'The engine', disconnected = fa
       status.state = 'connected'
       status.address = body.host && body.port ? `${body.host}:${body.port}` : location.host
       status.local = body.local === true
+      status.nodeNetwork = body.nodeNetwork === undefined ? status.local : body.nodeNetwork === true
       // Replaced only when they change, not on every check.
       lastAssistant = body.assistant ?? null
       const assistant = hideAssistant ? null : lastAssistant

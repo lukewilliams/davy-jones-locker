@@ -5,14 +5,11 @@
 #   cp .env.example .env
 #   docker compose -f davy-jones-locker/engine-shared/compose.yaml up -d --wait     (from the repo root)
 #
-# `tilt up` does this for you (set ENGINE_SHARED=0 to skip it). It runs as its
-# own compose project, so `tilt down` and `docker compose down` at the repo
-# root leave it, and its data, alone.
+# Start it before an app's compose project. It runs as a compose project of its
+# own, so `docker compose down` in an app leaves it, and its data, alone.
 #
 # identity-mock (sign-in for local development) runs only when asked for:
 #   docker compose -f davy-jones-locker/engine-shared/compose.yaml --profile identity up -d --build --wait
-#
-# Later here: azurite (blob storage), perhaps n8n.
 
 name: engine-shared
 

@@ -10,7 +10,7 @@
 # Networks:
 #   default         the app network: app-kraken's nginx reaches engine-kraken here
 #   kraken-sandbox  engine-kraken and the runner only, with no way out (internal)
-#   shared          Postgres (and later n8n): engine-shared creates it
+#   shared          Postgres: engine-shared creates it
 #                   (davy-jones-locker/engine-shared), or bring your own
 #                   (docker network create shared). Another name: SHARED_NETWORK
 

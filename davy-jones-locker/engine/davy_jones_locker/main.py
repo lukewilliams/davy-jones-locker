@@ -1,9 +1,10 @@
 """The engine: FastAPI, on port 3000. An app makes its own with create_app()
 (`app` here is one with nothing added, for running the engine as it is).
 
-  GET  /health                  { status: 'ok', host, port, local, assistant, nodes,
+  GET  /health                  { status: 'ok', host, port, local, nodeNetwork, assistant, nodes,
                                 signIn, user }: the app checks this (`nodes`: the
-                                app's node kinds' names; `local`: IS_LOCAL; `signIn`:
+                                app's node kinds' names; `local`: IS_LOCAL; `nodeNetwork`:
+                                whether they can reach the network; `signIn`:
                                 the provider, null when it signs no one in; `user`:
                                 { email, name }). Without a user, only { status,
                                 signIn, user: null }
@@ -71,16 +72,21 @@ provider: identity.Identity = identity.NoIdentity()
 
 
 def local_warning() -> str:
+    network = (
+        "the app's node kinds can reach the network (NODE_NETWORK=open)"
+        if noderunner.network_open()
+        else "the app's node kinds can't reach the network (NODE_NETWORK=none)"
+    )
+    signs_in = "The engine signs no one in" if provider.name == "none" else f"Sign-in is {provider.name}"
     return (
-        "IS_LOCAL is true: local development only. "
-        + ("The engine signs no one in, and the" if provider.name == "none" else f"Sign-in is {provider.name}; the")
-        + " app's node kinds can reach the network. Keep it on this machine: never expose it to a network others use."
+        f"IS_LOCAL is true: local development only. {signs_in}, and {network}. "
+        "Keep it on this machine: never expose it to a network others use."
     )
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    problems = identity.problems(provider)
+    problems = identity.problems(provider) + noderunner.network_problems()
     if problems:
         message = " ".join(problems)
         log.error(message)
@@ -131,7 +137,7 @@ def health():
         return {"status": "ok", "signIn": sign_in, "user": None}
     return {
         "status": "ok", "host": settings.PUBLIC_HOST, "port": settings.PORT, "hostname": socket.gethostname(),
-        "local": settings.IS_LOCAL,
+        "local": settings.IS_LOCAL, "nodeNetwork": noderunner.network_open(),
         "assistant": assist.summary(), "nodes": sorted(noderunner.KINDS),
         "signIn": sign_in, "user": user.describe() if sign_in and user else None,
     }

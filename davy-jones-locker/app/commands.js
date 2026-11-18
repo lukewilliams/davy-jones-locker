@@ -57,6 +57,15 @@ export function createAppCommands({ client, engineName, kept, chosenTheme, appCo
       },
     },
     {
+      name: 'f.Graph.Clear', kind: 'action',
+      description: 'Deletes every node and wire on the canvas (inside a subnet, the subnet\'s). Ctrl+Z (Cmd+Z on a Mac) brings them back.',
+      run: ({ graph }) => {
+        const count = graph.clear()
+        if (!count) return 'The canvas is already empty.'
+        return `Cleared ${count} node${count === 1 ? '' : 's'}: Ctrl+Z (Cmd+Z on a Mac) brings them back.`
+      },
+    },
+    {
       name: 'f.Theme', kind: 'setting', description: 'The look: a built-in theme or one the app defines. Kept in this browser.',
       values: () => themeNames(),
       get: () => chosenTheme.effective(),

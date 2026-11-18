@@ -29,7 +29,7 @@ The canvas fills its container, so give the container a size.
 
 | Prop | Default | |
 |---|---|---|
-| `models` | required | `[{ id, url, position?, scale? }]` |
+| `models` | required | `[{ id, url, position?, scale?, material? }]` |
 | `cameraPosition` | `[4, 3, 6]` | initial camera position |
 | `target` | `[0, 1, 0]` | what the camera looks at and orbits around |
 | `clearColor` | `#ffffff` | canvas background |
@@ -54,7 +54,9 @@ mounted. Both are also exposed as methods, for binding to your own buttons:
 <button @click="$refs.scene.frame()">Frame</button>
 ```
 
-Keys are ignored while focus is in a form control or an open select listbox, and
+Keys are listened for on the whole window, so every `SceneView` on a page
+answers them: set `homeKey` and `frameKey` to `null` on all but one. They're
+ignored while focus is in a form control or an open select listbox, and
 whenever Ctrl/Alt/Cmd is held.
 
 `logCamera` prints position and target each time orbiting settles, in the comma
@@ -76,6 +78,8 @@ next drag. (Rotation is included in the expanded object if you want it.)
 The framing maths is exported for use outside `SceneView`:
 
 ```js
+import { fitToObject } from 'seamonster/scene'
+
 const center = fitToObject(camera, object, { padding: 1.1, pivot: controls.target })
 if (center) { controls.target.copy(center); controls.update() }
 ```
@@ -134,8 +138,8 @@ fromRows(rows, {
 })
 ```
 
-`position` and `scale` are only set when the column is present, so the component
-defaults apply otherwise.
+`position` and `scale` are only set when the row's value isn't null, so the
+component defaults apply otherwise.
 
 ## Composing your own scene
 

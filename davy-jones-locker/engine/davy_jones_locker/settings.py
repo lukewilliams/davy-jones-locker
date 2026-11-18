@@ -14,11 +14,17 @@ def _list(name: str) -> list[str]:
 
 
 # Local development (IS_LOCAL=true): the engine may sign no one in
-# (IDENTITY=none, its default here), its sign-in provider may be reached over
-# plain http, and the app's node kinds can reach the network (the app's compose
-# file opens the node worker's way out from the same setting). Anything else
-# means a deployment, which requires sign-in (identity.py).
+# (IDENTITY=none, its default here), and its sign-in provider may be reached
+# over plain http. Anything else means a deployment, which requires sign-in
+# (identity.py).
 IS_LOCAL = (os.environ.get("IS_LOCAL") or "").strip().lower() == "true"
+
+# The node worker's way out: `none` (the default) or `open`. The app's compose
+# file puts the worker on its network from the same setting; the engine uses
+# it to refuse kinds that ask for the network when the worker has none. `open`
+# reaches any host, so it's for local development only (IS_LOCAL=true): the
+# engine refuses to start with it otherwise.
+NODE_NETWORK = (os.environ.get("NODE_NETWORK") or "none").strip().lower()
 
 # Sign-in (identity.py): `none` (local development only, the default there),
 # `oidc` or `header`. An app can pass its own provider to create_app instead.

@@ -11,9 +11,17 @@ import { defineNodeCategory, defineNodeKind, NODE_CATEGORIES, NODE_KINDS } from 
 //
 // They're defined with `where: 'server'` and no `run`, so SEAMONSTER runs them
 // through the engine client's runNode.
+//
+// A category with a built-in's id relabels or recolours that one, once per
+// page, as defineNodeCategory does in the browser.
+
+// SEAMONSTER's built-in categories. Their ids are stored in saved graphs, so
+// they never change.
+const BUILT_IN_CATEGORIES = new Set(['fetch', 'modify', 'debug', 'import', 'export', 'custom'])
 
 export function defineServerKinds(client, { log = (text) => console.warn(text) } = {}) {
   let asked = null
+  const relabelled = new Set()
   return watch(
     () => client.status.nodes,
     async (names) => {
@@ -30,7 +38,10 @@ export function defineServerKinds(client, { log = (text) => console.warn(text) }
         return
       }
       for (const category of listed.categories ?? []) {
-        if (NODE_CATEGORIES.some((c) => c.id === category.id)) continue
+        if (BUILT_IN_CATEGORIES.has(category.id)) {
+          if (relabelled.has(category.id)) continue
+          relabelled.add(category.id)
+        } else if (NODE_CATEGORIES.some((c) => c.id === category.id)) continue
         try {
           defineNodeCategory(category)
         } catch (e) {

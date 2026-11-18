@@ -16,6 +16,8 @@ import pytest
 
 from davy_jones_locker import sql
 
+pytestmark = pytest.mark.spatial
+
 QUERY = """\
 WITH fixtures AS (
   SELECT name, ST_SetCRS(ST_GeomFromText(wkt), 'EPSG:7855') AS geom FROM (VALUES

@@ -1264,7 +1264,7 @@ button.flow-panel-title {
  * LUXDARK: sharp obsidian for every category, with its own gradient (a
  * softer edge, fading back to deep, no tint); the node under the pointer
  * shows its category colour down the left edge. */
-/* FLOWDARK: FLOW in grey, light to dark, for every category (set on the face,
+/* FLOWDARK: FLOW in grey for every category (set on the face,
  * so wires, kind tags, hints and menu badges keep the category's colours). */
 .flow-theme-flowdark .flow-node-face {
   --node-color-from: #161718;

@@ -76,6 +76,7 @@ def test_variables_name_their_crs(tmp_path):
     assert result["variables"] == [{"name": "zones", "type": "GeoDataFrame", "summary": "1 × 1, EPSG:7844"}]
 
 
+@pytest.mark.spatial
 def test_without_geopandas_geometry_is_wkb(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "geopandas", None)  # import geopandas fails
     result, _ = run(tmp_path, "print(type(sql1_data).__name__, type(sql1_data.geom[0]).__name__)", {"sql1_data": "SELECT ST_Point(1, 2) AS geom"})

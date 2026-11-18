@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Fetches the DuckDB extensions the app shell loads from the app's own origin
-// (duckdbVersions.js: spatial), for the DuckDB-wasm it runs, into a folder the
+// (duckdbVersions.js: spatial, parquet, json, icu, excel), for the DuckDB-wasm it runs, into a folder the
 // app serves as it is (Vite's public/, say):
 //
 //   davy-jones-locker-extensions public/duckdb-extensions

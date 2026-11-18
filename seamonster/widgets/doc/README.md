@@ -3,8 +3,8 @@
 Renders a sequence of tagged markdown documents in Vue 3 widgets.
 
 Fetching, filtering and ordering stay in the app; this library turns the rows it
-is given into styled HTML. Vue is the peer dependency; `marked` is a real
-dependency and does the parsing.
+is given into styled HTML. Vue is a peer dependency, and so is `marked`, which
+does the parsing: it's optional for SEAMONSTER, so install it with this widget.
 
 ## Usage
 

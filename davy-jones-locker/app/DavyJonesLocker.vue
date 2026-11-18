@@ -3,7 +3,7 @@
 // wired in: the engine (engineClient.js), its own node kinds (serverKinds.js),
 // SQL in the browser (duckdbSql.js), storage (localGraphStorage.js), and the
 // Terminal's commands (commands.js). Anything else FlowgraphEditor takes
-// (title) passes straight through, and so does its `panels` slot (the app's
+// (title, canvasMenu) passes straight through, and so does its `panels` slot (the app's
 // own panels).
 import { computed, ref } from 'vue'
 import { FlowgraphEditor } from 'seamonster'

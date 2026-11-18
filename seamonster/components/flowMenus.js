@@ -44,7 +44,10 @@ const nodeKindItems = (command, graph = null) => () =>
 // { point, from } (see FlowCanvas's connection-dropped event).
 export const CONNECTION_MENU = nodeKindItems('node.addConnected')
 
-export function createFlowMenus(layout, graph) {
+// `appItems()` gives the app's own canvas items (FlowgraphEditor's
+// `canvasMenu`), added after the built-ins; they run with the canvas's context,
+// { graph }.
+export function createFlowMenus(layout, graph, appItems = () => []) {
   const commands = {
     // A subnet's graph takes the canvas.
     'node.open': {
@@ -64,12 +67,27 @@ export function createFlowMenus(layout, graph) {
     },
     'node.delete': (id) => graph.remove({ nodeIds: [id] }),
     'wire.delete': (id) => graph.remove({ edgeIds: [id] }),
+    // Everything on the canvas, as one step undo brings back.
+    'graph.clear': {
+      disabled: () => !graph.flow.nodes.value.length && !graph.flow.edges.value.length,
+      run: () => {
+        const count = graph.clear()
+        graph.log(`Cleared ${count} node${count === 1 ? '' : 's'}: Ctrl+Z (Cmd+Z on a Mac) brings them back.`)
+      },
+    },
   }
 
-  const canvasMenu = [
-    { type: 'submenu', label: 'Nodes', items: nodeKindItems('node.add', graph) },
-    panelsSubmenu(layout),
-  ]
+  const canvasMenu = {
+    context: { graph },
+    items: () => [
+      { type: 'submenu', label: 'Nodes', items: nodeKindItems('node.add', graph) },
+      panelsSubmenu(layout),
+      { type: 'separator' },
+      { label: 'Clear graph', command: 'graph.clear' },
+      { type: 'separator' },
+      ...(appItems() ?? []),
+    ],
+  }
 
   return { commands, canvasMenu, connectionMenu: nodeKindItems('node.addConnected', graph) }
 }

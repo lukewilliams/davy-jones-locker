@@ -9,7 +9,8 @@ import { markRaw, shallowReactive } from 'vue'
 //   defineNodeKind({ kind: 'geo.buffer', label: 'Buffer', category: 'geo', run: async (ctx) => { … } })
 //
 // Both are reactive, so a kind defined later (one the server supplies, say)
-// appears in the Library and the menus. The built-in categories' colours are
+// appears in the Library and the menus. A built-in category can be relabelled
+// and recoloured the same way. The built-in categories' colours are
 // in styles.css (.flow-node--<category>); a defined category's are set on
 // the page, so anything coloured by category takes that class either way.
 
@@ -37,24 +38,52 @@ const HEX_COLOUR = /^#[0-9a-f]{3}([0-9a-f]{3})?$/i
 
 let categoryStyle = null
 
+// Categories SEAMONSTER defines: an app may relabel and recolour these, but
+// their ids, their order and the kinds in them stay put.
+const BUILT_IN_CATEGORIES = new Set(NODE_CATEGORIES.map((c) => c.id))
+
+function checkColours(id, colors) {
+  const { from, to, label: text = '#fff' } = colors ?? {}
+  if (![from, to, text].every((c) => HEX_COLOUR.test(c ?? ''))) {
+    throw new Error(`Category ${id} needs colors: { from, to } (and optionally label), each a #hex colour.`)
+  }
+  return { from, to, text }
+}
+
+// The class doubled for a built-in, so its rule outranks styles.css's
+// whichever loaded last.
+function setColours(id, { from, to, text }) {
+  if (typeof document === 'undefined') return
+  const selector = BUILT_IN_CATEGORIES.has(id) ? `.flow-node--${id}.flow-node--${id}` : `.flow-node--${id}`
+  categoryStyle ??= document.head.appendChild(document.createElement('style'))
+  categoryStyle.textContent +=
+    `${selector} { --node-color-from: ${from}; --node-color-to: ${to}; --node-label-color: ${text}; }\n`
+}
+
 // A category for the menus and the Library, after the built-in ones, with its
 // node colours: `from` and `to` (the face's gradient) and `label` (the name
 // on the face; white if not given).
+//
+// With a built-in's id (fetch, modify, debug, import, export, custom), it
+// relabels and recolours that one instead: `label`, `colors` or both, and
+// whatever is left out stays as it was. Saved graphs and other apps are
+// unaffected, since nodes store only the category's id.
 export function defineNodeCategory({ id, label, colors }) {
+  if (BUILT_IN_CATEGORIES.has(id)) {
+    if (!label && !colors) throw new Error(`Relabelling category ${id} needs a label, colors or both.`)
+    const shades = colors ? checkColours(id, colors) : null
+    const index = NODE_CATEGORIES.findIndex((c) => c.id === id)
+    // Replaced, not changed in place: the list is shallowly reactive.
+    if (label) NODE_CATEGORIES.splice(index, 1, { ...NODE_CATEGORIES[index], label })
+    if (shades) setColours(id, shades)
+    return
+  }
   if (!CATEGORY_ID.test(id ?? '')) throw new Error(`A category's id is lowercase letters, digits and hyphens: "${id}" isn't.`)
   if (!label) throw new Error(`Category ${id} needs a label.`)
   if (RESERVED_CATEGORIES.has(id) || NODE_CATEGORIES.some((c) => c.id === id)) {
     throw new Error(`There's already a category called ${id}.`)
   }
-  const { from, to, label: text = '#fff' } = colors ?? {}
-  if (![from, to, text].every((c) => HEX_COLOUR.test(c ?? ''))) {
-    throw new Error(`Category ${id} needs colors: { from, to } (and optionally label), each a #hex colour.`)
-  }
-  if (typeof document !== 'undefined') {
-    categoryStyle ??= document.head.appendChild(document.createElement('style'))
-    categoryStyle.textContent +=
-      `.flow-node--${id} { --node-color-from: ${from}; --node-color-to: ${to}; --node-label-color: ${text}; }\n`
-  }
+  setColours(id, checkColours(id, colors))
   NODE_CATEGORIES.push({ id, label })
 }
 
@@ -82,7 +111,7 @@ export function defineNodeCategory({ id, label, colors }) {
  *   outputName  whether its output can be named (Manage > Output Name)
  *   fields      what Manage shows for it, in order (see FIELD_TYPES below);
  *               each stored on the node's data under its `key`
- *   canRun(data)   a reason it can't run yet (Manage shows it by Run), or null
+ *   canRun(data)   a reason it can't run (Manage shows it by Run), or null
  *   runHint     Manage's line under Run (where results go, by default)
  *   slots       its named outputs beyond the first (see SLOTS below):
  *               [{ name, label?, pin? }], or a function of the node's data

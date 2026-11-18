@@ -20,7 +20,7 @@ The engine, outside Docker (from `davy-jones-locker/engine/`):
 python3.12 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt -r runner/requirements.txt && pip install -e .
 uvicorn davy_jones_locker.sandbox.server:app --port 9002
-IS_LOCAL=true RUNNER_URL=http://127.0.0.1:9002 uvicorn davy_jones_locker.main:app --port 9001
+TZ=UTC IS_LOCAL=true RUNNER_URL=http://127.0.0.1:9002 uvicorn davy_jones_locker.main:app --port 9001
 ```
 
 Here the runner has no container around it (and it can't limit memory on

@@ -4,7 +4,7 @@
 // built-ins are node looks, each a class in styles.css (.flow-theme-<name>):
 //
 //   FLOW      rounded, category gradients
-//   FLOWDARK  rounded, light to dark grey
+//   FLOWDARK  rounded, grey
 //   LUX       sharp, brushed metal in the category's colours
 //   LUXDARK   sharp, obsidian; the hovered node shows its category colour
 //

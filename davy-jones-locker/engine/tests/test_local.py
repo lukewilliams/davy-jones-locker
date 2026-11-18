@@ -30,23 +30,74 @@ def test_signing_no_one_in_is_for_local_development_only(monkeypatch):
         asyncio.run(start(FastAPI()))
 
 
-def test_local_engine_starts_warns_and_says_so(monkeypatch, caplog):
+@pytest.mark.parametrize("node_network,says", [
+    ("none", "node kinds can't reach the network"),
+    ("open", "node kinds can reach the network"),
+])
+def test_local_engine_starts_warns_and_says_so(monkeypatch, caplog, node_network, says):
     monkeypatch.setattr(settings, "IS_LOCAL", True)
+    monkeypatch.setattr(settings, "NODE_NETWORK", node_network)
     monkeypatch.setattr(settings, "IDENTITY", "")
     monkeypatch.setattr(settings, "DATABASE_URL", "")
     monkeypatch.setattr(main, "provider", identity.configure())
     asyncio.run(start(FastAPI()))
-    assert "node kinds can reach the network" in caplog.text
+    assert says in caplog.text
     assert main.health()["local"] is True
 
 
-def test_a_kind_may_ask_for_the_network_only_when_local():
+def fetch_kind():
     from davy_jones_locker import nodes
 
-    fetch = nodes.NodeKind(kind="app.fetch", label="Fetch", category="import", handler="handlers:fetch", network=True)
-    with pytest.raises(nodes.DefinitionError, match="IS_LOCAL=true"):
-        nodes.check([fetch], [])
-    nodes.check([fetch], [], local=True)
+    return nodes.NodeKind(kind="app.fetch", label="Fetch", category="import", handler="handlers:fetch", network=True)
+
+
+def test_a_kind_may_ask_for_the_network_only_when_the_worker_has_one():
+    from davy_jones_locker import nodes
+
+    with pytest.raises(nodes.DefinitionError, match="NODE_NETWORK=open"):
+        nodes.check([fetch_kind()], [])
+    nodes.check([fetch_kind()], [], network=True)
+
+
+def test_local_development_alone_gives_the_node_worker_no_way_out(monkeypatch):
+    """Signing no one in (IS_LOCAL) and the worker's network are
+    separate. A local engine's worker has no way out unless NODE_NETWORK says so."""
+    from davy_jones_locker import noderunner, nodes
+
+    monkeypatch.setattr(settings, "IS_LOCAL", True)
+    monkeypatch.setattr(settings, "NODE_NETWORK", "none")
+    assert noderunner.network_problems() == []
+    with pytest.raises(nodes.DefinitionError, match="NODE_NETWORK=open"):
+        noderunner.register([fetch_kind()], [])
+    monkeypatch.setattr(settings, "NODE_NETWORK", "open")
+    noderunner.register([fetch_kind()], [])
+    assert "app.fetch" in noderunner.KINDS
+    noderunner.register([], [])
+
+
+def test_an_open_node_network_is_for_local_development_only(monkeypatch):
+    from davy_jones_locker import noderunner
+
+    monkeypatch.setattr(settings, "IS_LOCAL", False)
+    monkeypatch.setattr(settings, "NODE_NETWORK", "open")
+    with pytest.raises(RuntimeError, match="local development only"):
+        noderunner.register([], [])
+    [problem] = noderunner.network_problems()
+    assert problem.endswith("Set NODE_NETWORK=none.") and "roadmap" not in problem
+    monkeypatch.setattr(settings, "IDENTITY", "header")
+    monkeypatch.setattr(settings, "IDENTITY_SECRET", "s" * 32)
+    monkeypatch.setattr(main, "provider", identity.configure())
+    with pytest.raises(RuntimeError, match="NODE_NETWORK=open"):
+        asyncio.run(start(FastAPI()))
+
+
+def test_node_network_takes_only_none_or_open(monkeypatch):
+    from davy_jones_locker import noderunner
+
+    monkeypatch.setattr(settings, "IS_LOCAL", True)
+    monkeypatch.setattr(settings, "NODE_NETWORK", "true")
+    with pytest.raises(RuntimeError, match="none .* or open"):
+        noderunner.register([], [])
 
 
 @pytest.mark.parametrize("host,allowed", [

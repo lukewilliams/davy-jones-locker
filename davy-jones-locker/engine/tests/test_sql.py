@@ -66,6 +66,7 @@ def point(table: pa.Table, column: str = "g") -> tuple[float, float]:
 # ---- The spatial extension ----
 
 
+@pytest.mark.spatial
 def test_spatial_is_loaded_with_x_y_axis_order():
     with sql.Session() as session:
         assert session.spatial
@@ -76,6 +77,7 @@ def test_spatial_is_loaded_with_x_y_axis_order():
     assert y == pytest.approx(5851013.5398555, abs=1e-6)
 
 
+@pytest.mark.spatial
 def test_geodesic_area_takes_x_y():
     # A 0.001° square at 37.47°S, measured on the ellipsoid without flipping.
     table = run(
@@ -97,6 +99,25 @@ def test_without_spatial_the_error_says_so(monkeypatch):
         run("SELECT ST_Point(1, 2) AS g")
 
 
+@pytest.mark.parametrize("query, named", [
+    ("SELECT * FROM db.reporting.posts", "db.reporting.posts"),
+    ("SELECT * FROM db.posts", "db.posts"),
+    ("SELECT 1 AS n WHERE EXISTS (SELECT 1 FROM DB.public.orders)", "DB.public.orders"),
+])
+def test_without_a_query_database_naming_db_says_so(monkeypatch, query, named):
+    monkeypatch.setattr(settings, "QUERY_DATABASE_URL", "")
+    with pytest.raises(sql.QueryError) as raised:
+        run(query)
+    message = str(raised.value)
+    assert f"reads {named}," in message and "no query database" in message and "QUERY_DATABASE_URL" in message
+
+
+def test_without_a_query_database_other_missing_tables_keep_duckdbs_message(monkeypatch):
+    monkeypatch.setattr(settings, "QUERY_DATABASE_URL", "")
+    with pytest.raises(sql.QueryError, match="orders does not exist"):
+        run("SELECT * FROM orders")
+
+
 # ---- Files and URLs: refused twice ----
 
 READERS = [
@@ -111,6 +132,7 @@ READERS = [
 ]
 
 
+@pytest.mark.spatial
 @pytest.mark.parametrize("template", READERS)
 def test_check_query_refuses_file_readers(template, kml_file):
     with pytest.raises(sql.QueryError, match="Read the file with DataIngest"):
@@ -140,6 +162,7 @@ def test_the_lockdown_alone_refuses_st_read(target, kml_file, web_server):
     assert hits == []
 
 
+@pytest.mark.spatial
 def test_st_read_works_before_the_lockdown(kml_file):
     """The control for the test above: the same file reads unlocked."""
     con = duckdb.connect()
@@ -181,6 +204,7 @@ def test_one_select_only():
 # ---- Geometry through a query ----
 
 
+@pytest.mark.spatial
 def test_spatial_sql_over_an_input():
     wkb = bytes.fromhex("0101000000000000000000F03F0000000000000040")  # POINT (1 2)
     table = pa.table({"id": [1], "geometry": [wkb]})
@@ -238,6 +262,7 @@ def types_of(data: bytes, tmp_path) -> dict[str, str]:
 SITE = "ST_SetCRS(ST_Point(144.95, -37.47), 'EPSG:4326')"
 
 
+@pytest.mark.spatial
 def test_an_input_is_geometry_with_its_crs(geoparquet):
     table = run(
         "SELECT ST_CRS(geometry) AS crs, typeof(geometry) AS type FROM input1",
@@ -247,6 +272,7 @@ def test_an_input_is_geometry_with_its_crs(geoparquet):
     assert table.column("type")[0].as_py() == "GEOMETRY('EPSG:4326')"
 
 
+@pytest.mark.spatial
 def test_a_query_keeps_each_columns_crs(geoparquet, tmp_path):
     data = sql.run_query(
         "SELECT id, geometry, ST_Transform(geometry, 'EPSG:7855') AS mga FROM input1",
@@ -262,6 +288,7 @@ def test_a_query_keeps_each_columns_crs(geoparquet, tmp_path):
     assert y == pytest.approx(5851013.5398555, abs=1e-6)
 
 
+@pytest.mark.spatial
 def test_geometry_made_by_a_query_leaves_as_geoparquet(tmp_path):
     data = sql.run_query(
         "SELECT ST_SetCRS(ST_Point(320000, 5851000), 'EPSG:7855') AS mga, "
@@ -276,6 +303,7 @@ def test_geometry_made_by_a_query_leaves_as_geoparquet(tmp_path):
     assert types_of(data, tmp_path)["solid"] == "GEOMETRY"
 
 
+@pytest.mark.spatial
 def test_an_unknown_crs_stays_unknown(geoparquet):
     unknown = {"version": "1.0.0", "primary_column": "geometry",
                "columns": {"geometry": {"encoding": "WKB", "geometry_types": [], "crs": None}}}
@@ -287,6 +315,7 @@ def test_an_unknown_crs_stays_unknown(geoparquet):
     assert geo_of(data)["geometry"]["crs"] is None
 
 
+@pytest.mark.spatial
 def test_crs84_is_read_as_epsg_4326(geoparquet):
     # No `crs` key means OGC:CRS84 (GeoParquet's rule, which DuckDB's writer
     # relies on for an untagged column). The browser reads it as EPSG:4326,
@@ -299,6 +328,7 @@ def test_crs84_is_read_as_epsg_4326(geoparquet):
     assert (table.column("a")[0].as_py(), table.column("n")[0].as_py()) == ("EPSG:4326", "EPSG:4326")
 
 
+@pytest.mark.spatial
 def test_mixed_crss_are_refused(geoparquet):
     inputs = {
         "a": geoparquet(f"SELECT {SITE} AS geometry"),
@@ -315,6 +345,7 @@ def test_metadata_duckdb_cant_use_leaves_a_blob():
     assert result.column("type")[0].as_py() == "BLOB"
 
 
+@pytest.mark.spatial
 def test_without_spatial_the_crs_still_travels(monkeypatch, geoparquet):
     data_in = geoparquet("SELECT ST_SetCRS(ST_Point(320000, 5851000), 'EPSG:7855') AS geometry")
     monkeypatch.setattr(sql, "_load_spatial", lambda con: False)

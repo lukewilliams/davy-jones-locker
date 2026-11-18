@@ -13,7 +13,8 @@ import SubnetFields from '../components/SubnetFields.vue'
 // SEAMONSTER's own node kinds, defined as an app defines its own (see
 // kindRegistry.js), in the order the Library and menus list them. Those that
 // run do so through `run(ctx)`, whose context and results graphRunner.js
-// describes. The rest can't run yet (roadmap steps 9 and 10).
+// describes; PythonScript runs on the server. The others without a `run`
+// say they can't run.
 
 const message = (e) => e?.message ?? String(e)
 const connected = (server, method) => server.state === 'connected' && typeof server[method] === 'function'

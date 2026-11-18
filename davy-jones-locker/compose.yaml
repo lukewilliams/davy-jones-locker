@@ -9,17 +9,21 @@
 # engine/runner.env for the runner (copy engine/runner.env.example).
 #
 # IS_LOCAL: set IS_LOCAL=true for local development, in a .env beside this
-# file (compose reads it for the ${...} below) or in the shell. It reaches the
-# engine, and opens the node worker's way out (the `outside-true` network),
-# so the app's node kinds can reach the network. Exactly `true` or `false`:
-# compose refuses anything else ("undefined network outside-..."). Without
-# it, the engine counts as deployed, and starts only with sign-in (IDENTITY
-# and its settings in engine/.env; the engine README, "Sign-in").
+# file (compose reads it for the ${...} below) or in the shell. The engine may
+# then sign no one in. Without it, the engine counts as deployed, and starts
+# only with sign-in (IDENTITY and its settings in engine/.env; the engine
+# README, "Sign-in").
+#
+# NODE_NETWORK: the node worker's way out, `none` (the default) or `open`
+# (the `outside-open` network), for node kinds that call web services.
+# Exactly one of those: compose refuses anything else ("undefined network
+# outside-..."). `open` reaches any host, so the engine allows it only with
+# IS_LOCAL=true.
 #
 # This builds the images from engine/. They're published too, for each
 # release (ghcr.io/lukewilliams/davy-jones-locker-engine, -runner and
 # -node-worker, tagged with the version): replace a `build:` with
-# `image: ghcr.io/lukewilliams/davy-jones-locker-runner:0.4.1`, say, and
+# `image: ghcr.io/lukewilliams/davy-jones-locker-runner:0.5.0`, say, and
 # build the app's own engine FROM the engine's.
 #
 # The node worker runs the app's own node kinds (engine/davy_jones_locker/nodes/):
@@ -31,14 +35,14 @@
 #   default  the app network: the app reaches the engine here
 #   sandbox  the engine and the runner only, with no way out (internal)
 #   nodes    the engine and the node worker only, with no way out (internal)
-#   outside-true   the node worker's way out, with IS_LOCAL=true
-#   outside-false  without it: internal, so still no way out
+#   outside-open   the node worker's way out, with NODE_NETWORK=open
+#   outside-none   without it: internal, so still no way out
 #   shared   Postgres, from engine-shared (below) or your own
 #
 # The engine refuses every request from the runner and the node worker (it
 # looks their addresses up by name), so code running there can't use it.
 
-# engine-shared: Postgres (later identity, blob storage, a scheduler), as its
+# engine-shared: Postgres, and identity-mock when asked for, as its
 # own project on the `shared` network. Optional: use your own services instead,
 # or start it with
 #   docker compose -f davy-jones-locker/engine-shared/compose.yaml up -d --wait
@@ -55,6 +59,7 @@ services:
       NODE_WORKER_URL: http://node-worker:3000
       PUBLIC_HOST: engine
       IS_LOCAL: ${IS_LOCAL:-false}
+      NODE_NETWORK: ${NODE_NETWORK:-none}
     ports:
       # This machine only, unless .env's ENGINE_BIND says otherwise: with
       # IS_LOCAL=true the engine signs no one in, so anyone who reached it
@@ -106,7 +111,7 @@ services:
   # Runs the app's own node kinds (its handlers are trusted code, but they
   # parse what users send). It holds no credentials; read-only, unprivileged
   # and capability-free, like the runner. It reaches the engine, and with
-  # IS_LOCAL=true the network too (outside-true); otherwise nothing else.
+  # NODE_NETWORK=open the network too (outside-open); otherwise nothing else.
   # Replace the build with the app's own image, FROM this one.
   node-worker:
     profiles: [nodes]
@@ -122,7 +127,7 @@ services:
       # NODE_KINDS: nodes:KINDS    # the app's list, in its image
     networks:
       - nodes
-      - outside-${IS_LOCAL:-false}
+      - outside-${NODE_NETWORK:-none}
     init: true
     read_only: true
     tmpfs:
@@ -142,8 +147,8 @@ networks:
     internal: true
   nodes:
     internal: true
-  outside-true: {}
-  outside-false:
+  outside-open: {}
+  outside-none:
     internal: true
   # shared:
   #   external: true

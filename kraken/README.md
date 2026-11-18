@@ -71,8 +71,10 @@ theme, the engine's name, the storage name, the ports. Then:
 - **In `app/package.json`:** the published packages, pinned exactly, in
   place of the `file:` links. That's `seamonster` and `davy-jones-locker`
   at the versions of a release.
-- **In `app/Dockerfile`:** only the app stage. The packages come from npm,
-  so the stage that builds them goes.
+- **In `app/Dockerfile`:** the `libraries` stage goes, since the packages
+  come from npm. The `app` stage starts from Node itself
+  (`FROM node:${NODE_VERSION}-slim AS app`, with a `WORKDIR` of its own),
+  and the nginx stage, which serves what it builds, stays.
 - **In `engine/Dockerfile`:**
   `FROM ghcr.io/lukewilliams/davy-jones-locker-engine:<version>`.
 - **In `compose.yaml`:** the runner as `image:

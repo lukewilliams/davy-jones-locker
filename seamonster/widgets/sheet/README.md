@@ -42,21 +42,24 @@ rather than to its value:
 ```
 
 Two fields are rendered directly — `tooltip` becomes the cell's `title`, and
-`tone` becomes a `ws-tone-{tone}` class. What a tone *means* is left to the app:
+`tone` becomes a `ws-tone-{tone}` class. A cell with a tooltip is underlined
+with dots. What a tone *means* is left to the app:
 
 ```css
 .ws-tone-up { color: #b3261e; }
 .ws-tone-down { color: #1c7245; }
 ```
 
-Any other field is passed to the `cell` slot as `meta` and ignored otherwise.
+The `cell` slot gets the whole of the cell's `meta`, those two included; any
+other field is ignored outside it.
 
 Both arrays are rendered in the order given — sort before passing them in.
 
 ### fromLongRows
 
 Converts long-format results (one row per cell, as a database returns them) into
-that shape, sorting numeric keys numerically:
+that shape, sorting numeric keys numerically (numbers and BigInts, which is how
+DuckDB returns BIGINT):
 
 ```js
 fromLongRows(cells, {
@@ -92,7 +95,8 @@ Slot props: `row`, `column`, `value`, `meta`.
 
 The stylesheet is opt-in. Every value an app is expected to change is a custom
 property, and **those tokens are the supported contract** — the `ws-` class names
-are internal and may change between versions.
+are internal and may change between versions, except the `ws-tone-{tone}`
+classes that a cell's `tone` produces.
 
 | Token | Default | |
 |---|---|---|

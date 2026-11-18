@@ -58,7 +58,7 @@ follows its container when it resizes (in a panel, say).
 | `basemap` | OpenStreetMap | `{ url, attribution, maxZoom }` |
 | `autoFit` | `true` | fit the view to the layers the first time they load |
 | `selected` | `[]` | features to highlight: `[{ layer, feature }]`, a layer's `id` and a feature's GeoJSON `id` (null or left out: every feature in the layer). Changing it restyles them without drawing the layers again; Leaflet pans to one out of view |
-| `selectedStyle` | `SELECTED_STYLE` | how highlighted features are drawn (yellow, 4px) |
+| `selectedStyle` | `SELECTED_STYLE` (from `seamonster/spatial`) | how highlighted features are drawn (yellow, 4px) |
 
 `center` is `[lng, lat]`, GeoJSON order — **not** Leaflet's `[lat, lng]`. One
 convention has to serve both renderers; `LeafletMap` flips it internally. This is
@@ -77,7 +77,7 @@ hatch to the underlying instance.
 ```js
 {
   id: 'parks',                       // required, and the render key
-  label: 'Parks',                    // defaults to id
+  label: 'Parks',                    // for your own legend; fromRows defaults it to id
   format: 'geojson',                 // default
   url: '/spatial/parks.geojson',     // or…
   data: geojsonObjectOrString,       // …inline, which wins over url
@@ -116,10 +116,12 @@ fromRows(rows, {
   format: 'format',
   url: 'url',
   data: 'data',
-  style: 'style',       // a JSON object or a JSON string
   visible: 'visible',
 })
 ```
+
+The style column is always `style`, a JSON object or a JSON string; the
+`style` option is the defaults.
 
 An unparseable `style` string is ignored rather than thrown — one bad row should
 not take the map down.
@@ -144,9 +146,10 @@ defineSpatialFormat('topojson', {
 })
 ```
 
-`load` handles a url, `parse` handles inline data; supply either or both.
-Anything returned that is a Feature, a bare geometry, or an array of collections
-is normalised to a single FeatureCollection.
+`load` handles a url, `parse` handles inline data; supply either or both. They
+must return a GeoJSON FeatureCollection: the built-in formats turn a Feature, a
+bare geometry or an array of collections into one, but a format you define
+doesn't. The built-in `shapefile` loads from a `url` only.
 
 ## Filtering
 
@@ -154,13 +157,13 @@ This library has no opinion about filtering — it draws the array it is handed.
 Drive that array from your own query and the map follows:
 
 ```js
-const { rows } = useQuery(MAP_LAYERS_SQL, filters.sqlParams('region', 'showLayers'))
+const { rows } = useQuery(MAP_LAYERS_SQL, filters.sqlParams('region', 'showLayers')) // your app's own query
 const layers = computed(() => fromRows(rows.value, { baseUrl: import.meta.env.BASE_URL }))
 ```
 
-Layers are keyed by `id`, so one leaving the array is removed from the map and
-its GeoJSON released. Fetched layers are cached by url, so a layer that comes
-back after being filtered out is not re-fetched. Inline `data` is not cached —
+Layers are keyed by `id`, so one leaving the array is removed from the map.
+Fetched layers stay cached by format and url while the map is mounted, so a
+layer that comes back after being filtered out is not re-fetched. Inline `data` is not cached —
 re-parsing something already in memory is cheaper than tracking it.
 
 Only the latest resolve is applied, so toggling filters quickly cannot let an

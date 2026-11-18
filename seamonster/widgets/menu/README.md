@@ -36,7 +36,9 @@ const panelMenu = [
   attributes and listeners pass through, and the element is exposed as `el`).
   Right-clicking inside it opens the menu of the nearest `v-menu` region around
   the pointer. With no region, or a menu with no visible items, the browser's
-  menu is suppressed and nothing opens. Props: `commands`, `modal` (default
+  menu is suppressed and nothing opens. Its content sits inside a
+  `div.wm-trigger` with `display: contents`, so style it with descendant
+  selectors, not child ones (`>`). Props: `commands`, `modal` (default
   `true`: the rest of the page ignores the pointer while a menu is open).
   Through a template ref, `open({ x, y }, menu)` opens a menu from code at a
   point in client coordinates, taking what `v-menu` takes (say, a menu of what
@@ -59,12 +61,12 @@ right-clicks within itself, and the app's host stands down.
   action: (context, args) => {}, // …an inline function instead
   args: { any: 'value' },  // passed to the command/action
   shortcut: 'Ctrl+Space',  // displayed only; the widget binds the key itself
-  badge: '#4d7dfb',        // optional coloured dot: a CSS colour, or { color?, class? }
-  tone: false,             // see Tones; defaults to the badge, else inherited
+  badge: '#4d7dfb',        // optional coloured dot: a CSS colour, or { color?, class? }, or (context) => either
+  tone: false,             // see Tones; defaults to the badge, else inherited; or (context) => …
   disabled: false,         // or (context) => boolean
   hidden: false,           // or (context) => boolean
   checked: true,           // checkbox: or (context) => boolean
-  value: 'a',              // radio: the selected value
+  value: 'a',              // radio: the selected value; choosing an option runs with (context, option's value) instead of args
   options: [{ value, label, badge?, shortcut?, disabled? }], // radio
   items: [ … ],            // submenu: or (context) => items
   id: 'collapse',          // optional stable key

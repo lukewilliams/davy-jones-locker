@@ -51,7 +51,7 @@ export, a `provide()`, or a Pinia store).
     isDefault: true,
     disabledWhen: { variable: 'x', value: 'Y' } | null,
   }],
-  disabledWhen: null,                 // optional; applies to every option
+  disabledWhen: null,                 // optional; applies to every option without its own
 }
 ```
 
@@ -82,9 +82,10 @@ what the control components use to disable themselves as a unit.
 A disabled option **keeps its value** — a greyed checkbox stays ticked and a
 disabled select keeps its selection, so queries must ignore them in that case.
 
-Rules are validated when the panel is created: an unknown variable, or a value
-that is not one of that variable's options, throws immediately rather than
-silently never matching.
+Rules are validated when the panel is created: an unknown variable, a rule with
+no value, or a value that is not one of that variable's options, throws
+immediately rather than silently never matching. So does a second control with
+the same `variable`.
 
 `fromRows` converts the flat, one-row-per-option shape (a `ui_controls` table) into
 that. Pass a second argument to override column names. If your definitions come
@@ -99,13 +100,14 @@ import { defineControlType } from 'seamonster/controls'
 import ColorControl from './ColorControl.vue'
 
 defineControlType('color', {
-  component: ColorControl,           // props: control, modelValue, disabled
+  component: ColorControl,           // props: control, modelValue, disabled, disabledOptions
   createValue: (control) => control.options[0].value,
   toSqlParam: (value) => value,      // optional; omit if the raw value binds as-is
 })
 ```
 
-The component emits `update:modelValue`. Register the type before creating a panel
+`disabledOptions` is the values of the options disabled one by one. The
+component emits `update:modelValue`. Register the type before creating a panel
 that uses it. Registering an existing name replaces the built-in, so an app can
 swap a component's markup without forking the package.
 
@@ -127,7 +129,7 @@ between versions.
 | `--wc-label-gap` | `4px` | space below a label |
 | `--wc-checkbox-size` | `16px` | checkbox box (the tick scales with it) |
 | `--wc-checkbox-gap` | `8px` | checkbox to its label |
-| `--wc-disabled-opacity` | `0.5` | disabled select trigger |
+| `--wc-disabled-opacity` | `0.5` | disabled select trigger, and disabled options |
 
 They inherit, so set them on any ancestor:
 

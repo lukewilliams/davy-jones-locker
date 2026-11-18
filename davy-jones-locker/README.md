@@ -1,20 +1,20 @@
 # DAVY JONES' LOCKER
 
-> **Early release.** This is 0.2: the API may change between minor versions
-> until 1.0, so pin an exact version if you depend on it.
+> **Early release.** The API may change between minor versions until 1.0, so
+> pin an exact version if you depend on it.
 
 An app framework for flowgraphs, built on SEAMONSTER (the UI library). It
 supplies what SEAMONSTER's editor leaves to its host: a browser shell that
 runs SQL in the browser and keeps the open graph, and a Python engine that
 runs what the browser can't. An app built on it chooses its title, themes,
 engine settings, its own node kinds (written in Python, run on the engine)
-and (later) its own console commands.
+and its own Terminal commands.
 
 | Folder | What | Released as |
 |---|---|---|
 | [app/](app/) | the browser shell: the engine client, DuckDB-wasm, storage, and `DavyJonesLocker`, the whole window | `davy-jones-locker` on npm |
 | [engine/](engine/README.md) | the Python engine (FastAPI), its sandboxed runner, and the node worker for the app's own node kinds | `davy-jones-locker` on PyPI, and base images on `ghcr.io` |
-| [engine-shared/](engine-shared/README.md) | optional development services: Postgres, later identity and storage | (with the repo) |
+| [engine-shared/](engine-shared/README.md) | optional development services: Postgres, and an OpenID Connect provider for trying sign-in on your own machine | (with the repo) |
 | [compose.yaml](compose.yaml) | the engine, runner and node worker as an app runs them, to copy | (with the repo) |
 
 ## The app shell
@@ -46,7 +46,7 @@ with `import 'seamonster/style.css'` once in the app's entry. Props:
 | `theme` | `'FLOW'` | the theme, unless `f.Theme` has chosen another in this browser |
 | `commands` | `[]` | the app's own Terminal commands (below), definitions SEAMONSTER's `createCommandRegistry` takes |
 
-Anything else (`title`) passes through to SEAMONSTER's `FlowgraphEditor`,
+Anything else (`title`, `canvas-menu`) passes through to SEAMONSTER's `FlowgraphEditor`,
 and so does its `panels` slot, for the app's own panels (SEAMONSTER's README,
 "Panels"):
 
@@ -113,6 +113,7 @@ in the browser, `b.` commands on the engine:
 |---|---|
 | `f.Help` | lists the commands, with what each does |
 | `f.Terminal.Clear` | empties the app's log |
+| `f.Graph.Clear` | deletes every node and wire on the canvas (inside a subnet, the subnet's), as the canvas menu's Clear graph does; Ctrl+Z (Cmd+Z on a Mac) brings them back |
 | `f.Theme = "LUX"` | the theme: a built-in one or one the app defines (`defineTheme`), kept in this browser over the `theme` prop |
 | `f.Security.DisconnectBackend`, `f.Security.EnableBackend` | stop talking to the engine (nothing is sent, the footer turns blue, nodes that need it can't run), kept across reloads; and start again |
 | `f.Security.WhoAmI` | says who you're signed in to the engine as |
@@ -140,14 +141,38 @@ for an app that wires FlowgraphEditor itself.
 
 ### DuckDB's extensions
 
-DuckDB's spatial extension (geometry, `ST_Read` for DataIngest's geo files) is
-24 MB, 6 MB gzipped, so the app serves it itself rather than every browser
-fetching it from DuckDB. It loads the first time something needs it (a geo
-file, a spatial function, Parquet with geometry), from
-`<extension-repository>/v1.5.5/<wasm_eh|wasm_mvp>/spatial.duckdb_extension.wasm`.
-DuckDB checks its signature as it loads, so only DuckDB's own file loads.
+The browser's DuckDB loads its extensions from the app itself, so the
+editor's own loads never reach DuckDB's servers:
 
-The package's `davy-jones-locker-extensions` command fetches it for the
+| Extension | For | Size (gzipped) |
+|---|---|---|
+| `spatial` | geometry, `ST_Read` for DataIngest's geo files | 24 MB (6 MB) |
+| `parquet` | Parquet files, and every table to and from the engine | 3 MB (0.7 MB) |
+| `json` | JSON files, and the parse that decides where a query runs | 0.8 MB (0.2 MB) |
+| `icu` | time zones: `TIMESTAMPTZ`, `AT TIME ZONE`, `timezone()` | 6 MB (1.9 MB) |
+| `excel` | Excel (.xlsx) files | 0.6 MB (0.2 MB) |
+
+Each loads the first time something needs it, except `icu`, which loads as
+DuckDB starts so its time zone can be set to UTC, as the engine's image runs.
+They come from
+`<extension-repository>/v1.5.5/<wasm_eh|wasm_mvp>/<name>.duckdb_extension.wasm`,
+which is DuckDB's `custom_extension_repository`: any other extension a query
+asks DuckDB for is looked for there too. DuckDB checks each one's signature as
+it loads, so only DuckDB's own files load, and a file it refuses says why
+("This query needs DuckDB's json extension, which couldn't be loaded (…)").
+
+That repository is only where DuckDB looks by default, not a lock: a query can
+set `custom_extension_repository` again, `LOAD` an extension from elsewhere,
+or read any URL (`read_csv('https://…')`), and only the page's
+Content-Security-Policy stops those requests. An app that should make no
+others sets `connect-src` to its own origin, its engine and
+`https://cdn.jsdelivr.net` (where DuckDB-wasm and sql.js come from).
+
+The engine's image runs in UTC too, so a `TIMESTAMPTZ`'s date parts and
+casts (`hour()`, `::DATE`) agree in both. An engine run outside Docker takes
+its machine's time zone: start it with `TZ=UTC` to match.
+
+The package's `davy-jones-locker-extensions` command fetches them for the
 DuckDB this version runs, with a gzipped copy beside each file, into a
 folder the app serves as it is. With Vite, run it before `dev` and `build`:
 
@@ -159,7 +184,10 @@ folder the app serves as it is. With Vite, run it before `dev` and `build`:
 }
 ```
 
-and leave `public/duckdb-extensions/` out of git. It fetches only what's
+and leave `public/duckdb-extensions/` out of git (in the app folder's
+`.gitignore`; from the repository root's, `**/public/duckdb-extensions/`,
+since a pattern with a slash in the middle matches only beside its own
+`.gitignore`). It fetches only what's
 missing, so it's quick once done. A server should serve the `.gz` copies, with
 a long cache (a path names its DuckDB version, so a file never changes), and
 answer a missing file with a 404 rather than the app's page. With nginx:
@@ -175,8 +203,9 @@ location /duckdb-extensions/ {
 To use DuckDB's own instead, pass
 `extension-repository="https://extensions.duckdb.org"`.
 
-Without it, everything but spatial SQL works, and a geo file or spatial query
-fails saying where the extension should be. An app linked with `file:` may
+Without them, little but CSV and plain SQL works: Parquet, JSON, Excel, geo
+files, time zones and spatial SQL fail saying which extension is missing and
+where it should be, and so does every run that reads a table from the engine. An app linked with `file:` may
 need `npm rebuild davy-jones-locker` to link the command the first time.
 
 `vue` and `seamonster` are peer dependencies. An app linking the framework
@@ -192,7 +221,7 @@ ghcr.io/lukewilliams/davy-jones-locker-engine`).
 
 ## Rules
 
-- JavaScript nodes never run on the engine until it has safeguards for them.
+- JavaScript nodes run only in the browser: the engine refuses them.
 - Nothing with credentials reaches the runner or the node worker:
   `runner.env` and `node-worker.env` have limits only.
 - The engine refuses every request from the runner and the node worker.

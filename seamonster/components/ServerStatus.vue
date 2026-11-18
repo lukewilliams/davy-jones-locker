@@ -9,7 +9,7 @@ import { runsOnServer } from '../lib/nodeKinds.js'
 // the graph has a node that runs on it (and so sends it data), like those
 // nodes' own dots; otherwise it's steady. Nothing while the host is still
 // checking. LOCAL marks a server in local development mode (IS_LOCAL), which
-// lets node kinds reach the network (and may sign no one in); the user's email
+// may sign no one in, and may let node kinds reach the network; the user's email
 // follows when the server signed them in (status.user).
 const graph = inject(FLOW_GRAPH)
 const status = graph.server

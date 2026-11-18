@@ -64,6 +64,18 @@ FIELD_TYPES = {"text", "number", "select", "checkbox", "code", "file", "readonly
 BUILT_IN_CATEGORIES = {"fetch", "modify", "debug", "import", "export", "custom"}
 
 
+def select_option(option) -> dict:
+    """A select option as SEAMONSTER draws it, {value, label}: a plain value
+    (text or a number) is its own label."""
+    if isinstance(option, dict):
+        return dict(option)
+    return {"value": option, "label": str(option)}
+
+
+def _plain_value(value) -> bool:
+    return isinstance(value, (str, int, float)) and not isinstance(value, bool)
+
+
 class DefinitionError(ValueError):
     """A node kind or category that can't be used, and why."""
 
@@ -112,7 +124,8 @@ class Field:
     """A field Manage shows for the kind, kept on the node's data under `key`.
     `options` holds the type's own (placeholder, mono, min, max, step,
     options, language, rows, accept, value for readonly...), as SEAMONSTER
-    names them."""
+    names them. A select's `options` may be plain values, ["flux", "sql"],
+    or {"value", "label"} each; the browser is sent {value, label}."""
 
     key: str
     label: str
@@ -125,6 +138,8 @@ class Field:
 
     def to_json(self) -> dict:
         out = {"key": self.key, "label": self.label, "type": self.type, **self.options}
+        if self.type == "select" and isinstance(out.get("options"), (list, tuple)):
+            out["options"] = [select_option(o) for o in out["options"]]
         if self.default is not None:
             out["default"] = self.default
         if self.hint:
@@ -139,14 +154,21 @@ class Field:
 @dataclass(frozen=True)
 class NodeCategory:
     """A category for the Library and menus, with its nodes' colours: `from`
-    and `to` (the face's gradient) and optionally `label` (the name's)."""
+    and `to` (the face's gradient) and optionally `label` (the name's).
+
+    With a built-in's id (fetch, modify, debug, import, export, custom), it
+    relabels that one in the browser, and recolours it when `colors` is
+    given; its id, order and kinds stay as they are."""
 
     id: str
     label: str
-    colors: dict
+    colors: dict | None = None
 
     def to_json(self) -> dict:
-        return {"id": self.id, "label": self.label, "colors": dict(self.colors)}
+        out = {"id": self.id, "label": self.label}
+        if self.colors is not None:
+            out["colors"] = dict(self.colors)
+        return out
 
 
 @dataclass(frozen=True)
@@ -159,8 +181,8 @@ class NodeKind:
     "required"?}]: `hint` shows on the pin, and a `required` pin with
     nothing wired in stops the node running), as SEAMONSTER has them.
     `timeout_s` bounds a run; `network` says it needs a way out, which the
-    worker has only in local development (IS_LOCAL=true, where every kind has
-    one) until sign-in and roadmap 10e's proxy."""
+    worker has only with NODE_NETWORK=open (local development only, where
+    every kind has one)."""
 
     kind: str
     label: str
@@ -224,16 +246,25 @@ class NodeKind:
         return [s["name"] for s in self.slots if s["name"] != first]
 
 
-def check(kinds: list[NodeKind], categories: list[NodeCategory], local: bool = False) -> None:
+def check(kinds: list[NodeKind], categories: list[NodeCategory], network: bool = False) -> None:
     """Raise DefinitionError for anything the engine or the browser couldn't use.
-    `local`: the engine is in local development (IS_LOCAL), where the node
-    worker has a way out, so a kind may ask for one."""
+    `network`: the node worker has a way out (NODE_NETWORK=open, in local
+    development), so a kind may ask for one."""
     category_ids = set(BUILT_IN_CATEGORIES)
+    relabelled = set()
     for category in categories:
-        if not re.match(r"^[a-z][a-z0-9-]*$", category.id) or category.id in category_ids:
+        if not category.label:
+            raise DefinitionError(f"Category {category.id!r} needs a label.")
+        if category.id in BUILT_IN_CATEGORIES:
+            if category.id in relabelled:
+                raise DefinitionError(f"Category {category.id!r} is relabelled twice.")
+            relabelled.add(category.id)
+            if category.colors is None:
+                continue
+        elif not re.match(r"^[a-z][a-z0-9-]*$", category.id) or category.id in category_ids:
             raise DefinitionError(f"Category {category.id!r} needs a new id of lowercase letters, digits and hyphens.")
-        colours = [category.colors.get("from"), category.colors.get("to"), category.colors.get("label", "#fff")]
-        if not all(isinstance(c, str) and HEX_COLOUR.match(c) for c in colours):
+        colours = [category.colors.get("from"), category.colors.get("to"), category.colors.get("label", "#fff")] if isinstance(category.colors, dict) else []
+        if not colours or not all(isinstance(c, str) and HEX_COLOUR.match(c) for c in colours):
             raise DefinitionError(f"Category {category.id} needs colors from and to (and optionally label), each a #hex colour.")
         category_ids.add(category.id)
     names = set()
@@ -250,10 +281,10 @@ def check(kinds: list[NodeKind], categories: list[NodeCategory], local: bool = F
             raise DefinitionError(f"{where}'s description needs to be text.")
         if not HANDLER.match(kind.handler):
             raise DefinitionError(f"{where} needs a handler written module:function.")
-        if kind.network and not local:
+        if kind.network and not network:
             raise DefinitionError(
-                f"{where} asks for network access, which the node worker gives only in local development "
-                "(IS_LOCAL=true) until the engine has sign-in (roadmap 8b part b and 10e)."
+                f"{where} asks for network access, which the node worker has only with NODE_NETWORK=open. "
+                "That's for local development only (IS_LOCAL=true)."
             )
         keys = set()
         for f in kind.fields:
@@ -262,6 +293,8 @@ def check(kinds: list[NodeKind], categories: list[NodeCategory], local: bool = F
             if not IDENTIFIER.match(f.key) or f.key in keys:
                 raise DefinitionError(f"{where} needs its fields' keys to be distinct identifiers ({f.key!r} isn't).")
             keys.add(f.key)
+            if f.type == "select":
+                _check_select(where, f)
             for rule in f.validate:
                 if len(rule.tests()) != 1 or rule.severity not in ("error", "warn"):
                     raise DefinitionError(f"{where}'s field {f.key} has a rule that needs exactly one test and severity error or warn.")
@@ -276,6 +309,32 @@ def check(kinds: list[NodeKind], categories: list[NodeCategory], local: bool = F
                     not isinstance(pin.get("hint", ""), str) or not isinstance(pin.get("required", False), bool)
                 ):
                     raise DefinitionError(f"{where}'s input pin {name} needs its hint to be text and required true or false.")
+
+
+def _check_select(where: str, f: Field) -> None:
+    """A select's options: a non-empty list of plain values or {value, label},
+    values distinct, and the default (if any) one of them."""
+    options = f.options.get("options")
+    wanted = (
+        f"{where}'s select {f.key} needs options: a list of values (text or numbers), "
+        'or of {"value": ..., "label": "..."}'
+    )
+    if not isinstance(options, (list, tuple)) or not options:
+        raise DefinitionError(f"{wanted}.")
+    values = []
+    for option in options:
+        if isinstance(option, dict):
+            if not _plain_value(option.get("value")) or not isinstance(option.get("label"), str):
+                raise DefinitionError(f"{wanted}; {option!r} isn't.")
+            values.append(option["value"])
+        elif _plain_value(option):
+            values.append(option)
+        else:
+            raise DefinitionError(f"{wanted}; {option!r} isn't.")
+    if len(set(values)) != len(values):
+        raise DefinitionError(f"{where}'s select {f.key} has an option twice: give each a value of its own.")
+    if f.default is not None and f.default not in values:
+        raise DefinitionError(f"{where}'s select {f.key} has default {f.default!r}, which isn't one of its options.")
 
 
 def load(spec: str) -> list[NodeKind]:

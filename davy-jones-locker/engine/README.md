@@ -1,7 +1,7 @@
 # davy-jones-locker (engine)
 
-> **Early release.** This is 0.2: the API may change between minor versions
-> until 1.0, so pin an exact version if you depend on it.
+> **Early release.** The API may change between minor versions until 1.0, so
+> pin an exact version if you depend on it.
 
 DAVY JONES' LOCKER's Python engine, which executes flowgraphs on the server
 (FastAPI, port 3000); **the runner**, the sandbox it runs Python in; and **the
@@ -20,10 +20,11 @@ engine, for:
 A deployed engine signs users in, through a provider the app chooses (OIDC,
 or a proxy's headers: see [Sign-in](#sign-in)), and serves only those
 `ALLOWED_USERS` names. For local development, `IS_LOCAL=true` (compose's
-`.env`, or the environment): then the app's node kinds can reach the network,
-and the engine may sign no one in (`IDENTITY=none`, the default there); it
-logs a warning saying so, `/health` reports `local: true`, and the app shows
-LOCAL. Without sign-in, anyone who can reach the engine can use it, its AI
+`.env`, or the environment): then the engine may sign no one in
+(`IDENTITY=none`, the default there); it logs a warning saying so, `/health`
+reports `local: true`, and the app shows LOCAL. The app's node kinds reach
+the network only with `NODE_NETWORK=open` as well (compose's `.env`; see
+[The app's node kinds](#the-apps-node-kinds)). Without sign-in, anyone who can reach the engine can use it, its AI
 assistant included (and so its LiteLLM key's budget): keep it on your own
 machine. Without `IS_LOCAL=true` it counts as deployed, and refuses to start
 without sign-in.
@@ -38,11 +39,11 @@ from davy_jones_locker import create_app
 app = create_app(title="engine-myapp")
 ```
 
-and its image starts from the framework's ([Dockerfile](Dockerfile)), adding
+and its image starts from the framework's ([Dockerfile](https://github.com/lukewilliams/davy-jones-locker/blob/main/davy-jones-locker/engine/Dockerfile)), adding
 that entry point:
 
 ```dockerfile
-FROM ghcr.io/lukewilliams/davy-jones-locker-engine:0.4.1
+FROM ghcr.io/lukewilliams/davy-jones-locker-engine:0.5.0
 COPY main.py ./
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "3000"]
 ```
@@ -53,20 +54,20 @@ published to GitHub's container registry for each release, from 0.2.0, for
 
 | Image | Built from |
 |---|---|
-| `ghcr.io/lukewilliams/davy-jones-locker-engine` | [Dockerfile](Dockerfile) |
-| `ghcr.io/lukewilliams/davy-jones-locker-runner` | [runner/Dockerfile](runner/Dockerfile) |
-| `ghcr.io/lukewilliams/davy-jones-locker-node-worker` | [nodeworker/Dockerfile](nodeworker/Dockerfile) |
+| `ghcr.io/lukewilliams/davy-jones-locker-engine` | [Dockerfile](https://github.com/lukewilliams/davy-jones-locker/blob/main/davy-jones-locker/engine/Dockerfile) |
+| `ghcr.io/lukewilliams/davy-jones-locker-runner` | [runner/Dockerfile](https://github.com/lukewilliams/davy-jones-locker/blob/main/davy-jones-locker/engine/runner/Dockerfile) |
+| `ghcr.io/lukewilliams/davy-jones-locker-node-worker` | [nodeworker/Dockerfile](https://github.com/lukewilliams/davy-jones-locker/blob/main/davy-jones-locker/engine/nodeworker/Dockerfile) |
 
-Each is tagged with the version (`0.4.1`) and its minor (`0.4`); there's no
+Each is tagged with the version (`0.5.0`) and its minor (`0.5`); there's no
 `latest`, so an app says which version it builds on. Or build them yourself
 from this folder (`docker build -t davy-jones-locker-engine .`, and `-f
 runner/Dockerfile` or `-f nodeworker/Dockerfile` for the others), as
-[../compose.yaml](../compose.yaml) does.
+[../compose.yaml](https://github.com/lukewilliams/davy-jones-locker/blob/main/davy-jones-locker/compose.yaml) does.
 
-The runner is used as it is ([runner/Dockerfile](runner/Dockerfile)), until
+The runner is used as it is ([runner/Dockerfile](https://github.com/lukewilliams/davy-jones-locker/blob/main/davy-jones-locker/engine/runner/Dockerfile)), until
 an app adds libraries of its own; so is the node worker
-([nodeworker/Dockerfile](nodeworker/Dockerfile)), until the app has node kinds
-of its own (below). [../compose.yaml](../compose.yaml) runs them, with their
+([nodeworker/Dockerfile](https://github.com/lukewilliams/davy-jones-locker/blob/main/davy-jones-locker/engine/nodeworker/Dockerfile)), until the app has node kinds
+of its own (below). [../compose.yaml](https://github.com/lukewilliams/davy-jones-locker/blob/main/davy-jones-locker/compose.yaml) runs them, with their
 safeguards; copy it into the app and name the services for it
 (`engine-myapp`, `engine-myapp-runner`): browsers reach the engine through the
 app's own origin at `/engines/<service>/`.
@@ -78,10 +79,10 @@ install the pinned, hashed versions in `requirements.txt` and
 
 ## Settings
 
-[.env.example](.env.example) (the engine),
-[runner.env.example](runner.env.example) (the runner's limits: never
+[.env.example](https://github.com/lukewilliams/davy-jones-locker/blob/main/davy-jones-locker/engine/.env.example) (the engine),
+[runner.env.example](https://github.com/lukewilliams/davy-jones-locker/blob/main/davy-jones-locker/engine/runner.env.example) (the runner's limits: never
 credentials, since scripts run beside it) and
-[node-worker.env.example](node-worker.env.example) (the node worker's: never
+[node-worker.env.example](https://github.com/lukewilliams/davy-jones-locker/blob/main/davy-jones-locker/engine/node-worker.env.example) (the node worker's: never
 credentials either). The app's compose file usually sets `RUNNER_URL` (the
 runner's address, default `http://runner:3000`), `NODE_WORKER_URL` (the node
 worker's, when the app has node kinds) and `PUBLIC_HOST` (what `/health`
@@ -105,7 +106,7 @@ no such job.
 
 ## Sign-in
 
-[identity.py](davy_jones_locker/identity.py). `IDENTITY` in `.env` picks the
+[identity.py](https://github.com/lukewilliams/davy-jones-locker/blob/main/davy-jones-locker/engine/davy_jones_locker/identity.py). `IDENTITY` in `.env` picks the
 provider, and the framework knows nothing of any particular one:
 
 | `IDENTITY` | |
@@ -219,7 +220,7 @@ machine plus `/engines/<service>`), `SECRET_KEY`,
 - Only the groups `ALLOWED_USERS` names are kept in the OIDC session, to
   keep the cookie small.
 - Machines (n8n's scheduled runs of `/graphs/{id}/execute`) have no way to
-  sign in yet: with sign-in on, they're refused like anyone else.
+  sign in: with sign-in on, they're refused like anyone else.
 - Saved settings are read once per user per engine process: with more than
   one engine replica, one doesn't see a setting changed through another
   until it restarts. (Jobs are per process already.)
@@ -228,7 +229,7 @@ machine plus `/engines/<service>`), `SECRET_KEY`,
 
 | | |
 |---|---|
-| `GET /health` | `{ status: 'ok', host, port, local, assistant, nodes, signIn, user }`: the app's connection check (`assistant`: `{ model, sampleRows }`, or null when it isn't set up; `nodes`: the app's node kinds' names; `signIn`: the provider's name, null when the engine signs no one in; `user`: `{ email, name }`). Without a user, only `{ status, signIn, user: null }` |
+| `GET /health` | `{ status: 'ok', host, port, hostname, local, nodeNetwork, assistant, nodes, signIn, user }`: the app's connection check (`host`: `PUBLIC_HOST`; `hostname`: the name of the machine or container the engine runs on; `nodeNetwork`: whether the app's node kinds can reach the network; `assistant`: `{ model, sampleRows }`, or null when it isn't set up; `nodes`: the app's node kinds' names; `signIn`: the provider's name, null when the engine signs no one in; `user`: `{ email, name }`). Without a user, only `{ status, signIn, user: null }` |
 | `GET /auth/login?next=` | signs in (see Sign-in), then back to `next`, a path on the app's site |
 | `GET /auth/callback` | where the sign-in provider sends the browser back (OIDC) |
 | `GET /auth/logout` | signs out |
@@ -241,12 +242,16 @@ machine plus `/engines/<service>`), `SECRET_KEY`,
 | `POST /jobs` | starts a job, a run longer than a request (below). Form data runs one Loop node: `job` (JSON `{ node, path?, subnets? }`: its data, its graph inline or named in `subnets`, the document's shared subnets) and an `input` file per pin (Parquet, its filename the pin's name, `item` for items). JSON runs a graph: `{ document \| graphId, targets? }`. Answers 202 with the job; 429 when `JOBS_AT_ONCE` are running |
 | `GET /jobs/{id}` | `{ id, kind, status, progress, started, finished, error?, warnings? (a Loop's), result? (a graph's, once done) }`: `status` is running, completed, failed or cancelled; `progress` `{ done, total, failed }` (a graph's names the Loop: `node`) |
 | `GET /jobs/{id}/result` | a finished Loop's tables, as `/run/node` answers: `result` (JSON `{ warnings, failed, cancelled, outputs: [{ slot, part }] }`, slot null for its first, then its other Outputs and `status`) and a `table` per output; a graph's result as JSON, as `/execute` answers. 409 while it runs |
-| `GET /commands` | `{ commands: [{ name, kind, description, type, secret, set, values?, value? }] }`: the Terminal's `b.` commands, for completion (`set`: whether a command set it, over `.env`; a secret's `value` only whether it has one) |
-| `POST /commands` | JSON `{ name, value? }`: sets a setting, prints it (no `value`), or runs an action. Answers `{ message }` |
 | `DELETE /jobs/{id}` | cancels it: it stops before its next node, or its next run of a Loop (one already running finishes) |
+| `GET /commands` | `{ commands: [{ name, kind, description, type, secret, set, values?, value? }] }`: the Terminal's `b.` commands, for completion (`name` with its `b.`, as typed; `set`: whether a command set it, over `.env`; a secret's `value` only whether it has one) |
+| `POST /commands` | JSON `{ name, value? }` (`name` with or without `b.`): sets a setting, prints it (no `value`), or runs an action. Answers `{ message }` |
 | `GET /graphs`, `GET /graphs/{id}`, `PUT /graphs/{id}` | saved graphs; `PUT` takes `{ name, document }` and answers `{ id, version }` |
 | `PUT /files/{key}` | stores data a DataIngest node read (Parquet), for server runs |
 | `POST /assist` | JSON `{ kind, request, code, inputs }`: the AI assistant writes a node's code. Answers `{ code, note, model }` (see below) |
+
+Form data is multipart (`multipart/form-data`), both ways: url-encoded
+fields are refused ("Not a multipart body."), so a client sending fields
+without files sends them as parts (httpx: `files=`, not `data=` alone).
 
 Every endpoint but `/health` and `/auth/*` needs a signed-in user (401, or
 403 for someone `ALLOWED_USERS` doesn't name), and every request that changes
@@ -260,8 +265,7 @@ Errors are JSON `{ error }`, their message meant for the user. `/run/python`'s
   is the `table` part), `{ kind: 'json', type, value }`,
   `{ kind: 'text', type, text }` (anything JSON can't hold), or
   `{ kind: 'none' }`.
-- `variables`: its top-level variables, `[{ name, type, summary }]` (for
-  promoting them to outputs of their own, later).
+- `variables`: its top-level variables, `[{ name, type, summary }]`.
 
 A graph run (`/execute`, `/graphs/{id}/execute`, e.g. from n8n) runs `targets`
 (default: every node with Auto Run on) and everything upstream, as the browser
@@ -276,12 +280,12 @@ Runs are recorded in `runs` when there's a database. On the server:
 | SQLQuery | on the server's DuckDB: its inputs and the query database |
 | PythonScript | in the runner |
 | DataIngest | from its tables stored with `PUT /files/{key}` (the keys in the node's `ingest.tables`) |
-| DataExport | to CSV, TSV, JSON (geometry as WKT, as in the browser) or Parquet (GeoParquet), returned in the result. The geo formats are written in the browser only, for now. Its CSV quotes every field (pyarrow's writer), which the browser's doesn't |
+| DataExport | to CSV, TSV, JSON (geometry as WKT, as in the browser) or Parquet (GeoParquet), returned in the result. Any other format, the geo ones among them, is written in the browser only: on the server the node fails, naming the formats it can write. Its CSV quotes every field (pyarrow's writer), which the browser's doesn't |
 | The app's own | by the node worker; a file field's file comes from the stored files (`PUT /files/{key}`) |
 | Subnet | its graph (inline, or shared from the document's `subnets`), run as it is: what's wired into its pins is put out by its Input nodes, and its Output nodes are its outputs, the topmost first. Errors name where they started (`Screening › Classify: …`); 8 levels deep at most. As in the browser (SEAMONSTER's README, "Subnets") |
 | Loop | its graph once per row of what's wired into `item`, each run in a locked-down DuckDB of its own, up to `loopConcurrency` at once (at most `LOOP_MAX_CONCURRENCY`, 4 by default). Each Output gathered across the runs by column name, `_key` and `_iteration` first, and `status` a row per run. As in the browser (SEAMONSTER's README, "Loops") |
-| JavaScript | refused: browser only until the engine has safeguards for it |
-| anything else | can't run on the server yet |
+| JavaScript | refused: it runs in the browser only |
+| anything else | refused: the node fails, saying its kind can't run on the server |
 
 Wires carry what they did in the browser: one from a node's main output pin
 (`source-0`) brings all its slots, one from a slot's own pin (`source:<slot>`)
@@ -291,7 +295,7 @@ just that slot.
 
 An app defines node kinds in Python, beside its engine, and the browser learns
 them from `GET /nodes`: they need no JavaScript.
-[nodes/](davy_jones_locker/nodes/__init__.py) has the whole of it; in short:
+[nodes/](https://github.com/lukewilliams/davy-jones-locker/blob/main/davy-jones-locker/engine/davy_jones_locker/nodes/__init__.py) has the whole of it; in short:
 
 ```python
 # nodes.py: definitions only (the engine and the node worker both import it)
@@ -324,14 +328,22 @@ def buffer(ctx):
     return {"table": ..., "slots": {"summary": ...}}  # pyarrow Tables, DataFrames or rows
 ```
 
+- **A category** with a built-in's id (`fetch`, `modify`, `debug`,
+  `import`, `export`, `custom`) relabels that category in the browser, and
+  recolours it when `colors` is given: `NodeCategory("fetch", "Query")`.
+  Its kinds and its place in the menus stay as they are.
 - **A kind** has a namespaced name (`app.kind`), a label, a category (built
   in, or one of `categories`), and a `handler`, `"module:function"`. The
   engine never imports the handler, so its libraries needn't be in the
   engine's image. `description` says what it does (Manage and the Library
   show it). `fields`, `slots` and `input_pins` are as SEAMONSTER has
-  them, an input pin's `hint` and `required` included, but plain data: hints are text, rules declarative (`Rule(required=,
-  min=, max=, pattern=)`, `severity='warn'` for a warning), options a fixed
-  list, and there's no custom field type. `timeout_s` bounds a run (60 by
+  them, an input pin's `hint` and `required` included, but plain data: hints are text, rules declarative (each `Rule` one test of
+  `required=`, `min=`, `max=` or `pattern=`: a field with two takes two rules;
+  `severity='warn'` for a warning), options a fixed
+  list, and there's no custom field type. A select's options are plain
+  values (`options={"options": ["flux", "sql"]}`, each its own label) or
+  `{"value", "label"}` each; the engine refuses to start on any other kind,
+  on an option given twice, or on a default that isn't one of them. `timeout_s` bounds a run (60 by
   default).
 - **A handler** gets `ctx`: `node` (the node's data, with defaults),
   `inputs` (what's wired in, one per slot each wire carries: `ref`, `id`,
@@ -377,7 +389,7 @@ def buffer(ctx):
   engine waits for the worker `timeout_s` plus 30 seconds (for the data
   both ways).
 - **The node worker** runs them: an image built `FROM` the framework's
-  ([nodeworker/Dockerfile](nodeworker/Dockerfile)), adding the app's
+  ([nodeworker/Dockerfile](https://github.com/lukewilliams/davy-jones-locker/blob/main/davy-jones-locker/engine/nodeworker/Dockerfile)), adding the app's
   `nodes.py`, handlers and their libraries, started with
   `NODE_KINDS=nodes:KINDS`. It runs only the kinds that list names, each run
   a process of its own, killed at the kind's `timeout_s`, its memory capped
@@ -386,15 +398,17 @@ def buffer(ctx):
   that break an error rule, and a required input pin with nothing wired in
   before asking the worker, and the worker checks again
   (`kind.errors(node, pins=...)`; `nodes.testing.Context` does the same).
-- **Network access:** in local development (`IS_LOCAL=true`) every kind can
-  reach the network, and a kind may say it needs to (`network=True`).
-  Otherwise `network=True` is refused: a deployed worker has no way out until
-  sign-in and roadmap step 10e, which gives one through a proxy to hosts the
-  engine's settings allow.
+- **Network access:** by default the worker reaches the engine and nothing
+  else, local development included. With `NODE_NETWORK=open` (compose's
+  setting, beside `IS_LOCAL`) every kind can reach any host, and a kind may
+  say it needs to (`network=True`); without it, `network=True` is refused.
+  `open` is for local development only: with `IS_LOCAL` false the engine
+  refuses to start. A deployed worker has no way out.
+  Outside Docker nothing limits the worker's network, whatever the setting.
 
 ## The Terminal's b. commands
 
-The browser's Terminal runs `b.` commands here ([commands.py](davy_jones_locker/commands.py)):
+The browser's Terminal runs `b.` commands here ([commands.py](https://github.com/lukewilliams/davy-jones-locker/blob/main/davy-jones-locker/engine/davy_jones_locker/commands.py)):
 
 | Command | |
 |---|---|
@@ -444,7 +458,7 @@ user's, saved after each command, or everyone's without sign-in) instead.
 ## AI assistant
 
 The Assistant field in SEAMONSTER's Manage panel (SQLQuery, PythonScript and
-JavaScript nodes) asks `POST /assist` ([assist.py](davy_jones_locker/assist.py)),
+JavaScript nodes) asks `POST /assist` ([assist.py](https://github.com/lukewilliams/davy-jones-locker/blob/main/davy-jones-locker/engine/davy_jones_locker/assist.py)),
 which asks a LiteLLM proxy's `/chat/completions`, OpenAI-style. Set it up in
 `.env`:
 
@@ -462,7 +476,7 @@ input's reference name, columns (name and type), row count and first
 `ASSIST_SAMPLE_ROWS` rows (values cut to 200 characters), which the browser
 works out by running what's upstream; and for SQL, the query database's
 tables and columns, not their rows. For Python, it's told the packages in
-[runner/requirements.in](runner/requirements.in) (or `RUNNER_PACKAGES_FILE`),
+[runner/requirements.in](https://github.com/lukewilliams/davy-jones-locker/blob/main/davy-jones-locker/engine/runner/requirements.in) (or `RUNNER_PACKAGES_FILE`),
 so enabling one there tells it too; when geopandas is one, it's also told
 inputs with geometry are GeoDataFrames. It answers by calling a `write_code` tool (code and a note), or with
 a fenced code block. The code only fills the node's editor: nothing runs
@@ -476,7 +490,7 @@ the container, that's `host.docker.internal`, which needs
 ## Database
 
 The engine owns its tables, in schema `FLOW_SCHEMA` (`flow`), created the
-first time the database answers ([database.py](davy_jones_locker/database.py)):
+first time the database answers ([database.py](https://github.com/lukewilliams/davy-jones-locker/blob/main/davy-jones-locker/engine/davy_jones_locker/database.py)):
 `graphs`, `files` (stored data by key), `runs` (with the user who started
 each), `user_settings` (each user's `b.` settings, encrypted). Without `DATABASE_URL`, or
 while the database can't be reached, those endpoints answer 503 and graph runs
@@ -485,10 +499,15 @@ way.
 
 SQL reads the query database (`QUERY_DATABASE_URL`, else `DATABASE_URL`),
 attached read-only as catalog `db`: `db.public.orders`, or just `orders`
-(plain names look in the inputs, then `db.public`). Its role should be
-read-only: engine-shared's reader role is, and
-[its script](../engine-shared/postgres/engine-roles.sql) makes the same roles
+(plain names look in the inputs, then `db.public`). A table in another
+schema needs its full name, `db.reporting.posts`: `reporting.posts` alone
+looks for a schema `reporting` in DuckDB's own catalog, and fails with
+"schema "reporting" does not exist". Its role reads only what it's granted
+(`USAGE` on the schema, `SELECT` on its tables), and should be read-only:
+engine-shared's reader role is, and [its script](https://github.com/lukewilliams/davy-jones-locker/blob/main/davy-jones-locker/engine-shared/postgres/engine-roles.sql) makes the same roles
 on any Postgres.
+Without either setting there's no `db`: a query naming it fails, saying
+that the engine has no query database.
 
 ## Safeguards
 
@@ -518,7 +537,7 @@ request, so replicas and restarts are covered. Loopback addresses are never
 refused: with the runner on the same machine (development), they're
 everyone's.
 
-**SQL** ([sql.py](davy_jones_locker/sql.py)). Each query or graph run gets its
+**SQL** ([sql.py](https://github.com/lukewilliams/davy-jones-locker/blob/main/davy-jones-locker/engine/davy_jones_locker/sql.py)). Each query or graph run gets its
 own in-memory DuckDB. Once the query database is attached, DuckDB is locked
 down: no file access, no new extensions or attachments, settings frozen. That
 doesn't stop `postgres_scan()` connecting to any server by connection string,
@@ -565,11 +584,11 @@ The engine runs without the extension, outside Docker for instance. A
 warning is logged once, and spatial SQL then fails with a message saying
 the extension isn't installed.
 
-**Python** ([sandbox/](davy_jones_locker/sandbox/)). The engine never runs
+**Python** ([sandbox/](https://github.com/lukewilliams/davy-jones-locker/tree/main/davy-jones-locker/engine/davy_jones_locker/sandbox)). The engine never runs
 it: the runner does, in a separate container that holds no credentials (its
 settings file is separate, and nothing secret goes in it) and can reach
 nothing but the engine. The container is read-only, unprivileged,
-capability-free and resource-limited ([../compose.yaml](../compose.yaml)).
+capability-free and resource-limited ([../compose.yaml](https://github.com/lukewilliams/davy-jones-locker/blob/main/davy-jones-locker/compose.yaml)).
 Each script runs in its own process with time, CPU, memory and file limits,
 in a scratch directory deleted afterwards, one at a time per container
 (concurrent runs share a user, so could read each other's files: scale with
@@ -577,22 +596,20 @@ replicas). After each run, every process it started is killed, even ones
 that left its process group, so nothing a script leaves running sees the next
 run; the container's init reaps them, so they can't use up its process limit
 either. Python can't be sandboxed from inside itself, so these limits are the
-safeguard, not anything the script is told. In production, Azure Container
-Apps' dynamic sessions (Hyper-V isolated) could replace the runner behind the
-same API.
+safeguard, not anything the script is told.
 
-**The app's node kinds** ([nodeworker/](davy_jones_locker/nodeworker/)).
+**The app's node kinds** ([nodeworker/](https://github.com/lukewilliams/davy-jones-locker/tree/main/davy-jones-locker/engine/davy_jones_locker/nodeworker)).
 Handlers are the app's code, but they parse what users send (uploads, other
 nodes' tables), often with C libraries. So they never run in the engine,
 which holds the database's and the AI proxy's credentials: the node worker
 runs them, in a container like the runner's (read-only, unprivileged, no
-capabilities, no credentials, on a network shared only with the engine). In
-local development (`IS_LOCAL=true`) compose also puts it on `outside-true`, a
-network with a way out, so handlers can call web services; otherwise it has
-none (`outside-false` is internal). It runs only the kinds `NODE_KINDS` names, never a handler a
+capabilities, no credentials, on a network shared only with the engine).
+With `NODE_NETWORK=open` (local development only) compose also puts it on
+`outside-open`, a network with a way out, so handlers can call web services;
+otherwise it has none (`outside-none` is internal). It runs only the kinds `NODE_KINDS` names, never a handler a
 request names, each run in its own process with a timeout and a memory cap.
 
-**Libraries**: scripts get exactly what [runner/requirements.in](runner/requirements.in)
+**Libraries**: scripts get exactly what [runner/requirements.in](https://github.com/lukewilliams/davy-jones-locker/blob/main/davy-jones-locker/engine/runner/requirements.in)
 lists (pandas, numpy, pyarrow), compiled to a pinned, hashed
 `runner/requirements.txt` and installed at image build; nothing installs at
 run time. To enable a library, add it there, recompile (the command is in the
@@ -623,7 +640,7 @@ that work with the framework's pandas and pyarrow), compile it with hashes
 as the framework's is, and install it in an image built on the runner's:
 
 ```dockerfile
-FROM ghcr.io/lukewilliams/davy-jones-locker-runner:0.4.1
+FROM ghcr.io/lukewilliams/davy-jones-locker-runner:0.5.0
 USER root
 COPY runner/requirements.txt /tmp/app-requirements.txt
 RUN pip install --no-cache-dir --require-hashes -r /tmp/app-requirements.txt && rm /tmp/app-requirements.txt
@@ -645,7 +662,10 @@ davy_jones_locker/
     context.py   what a handler is given (ctx), for the worker and for tests
     testing.py   running a handler in a test
   noderunner.py  the app's kinds as the engine knows them, and calls to the node worker
+  commands.py    the Terminal's b. commands, and each user's settings
+  jobs.py        jobs: runs longer than a request
   database.py    the engine's tables in Postgres
+  extensions.py  installs DuckDB's extensions, once, before the engine runs
   sql.py         locked-down DuckDB sessions (with spatial), query checks
   runner.py      calls to the runner
   executor.py    whole-graph runs
@@ -669,7 +689,7 @@ With Python 3.12 and the packages from both lock files installed, from this
 folder:
 
 ```
-IS_LOCAL=true RUNNER_URL=http://127.0.0.1:9002 uvicorn davy_jones_locker.main:app --port 9001
+TZ=UTC IS_LOCAL=true RUNNER_URL=http://127.0.0.1:9002 uvicorn davy_jones_locker.main:app --port 9001
 uvicorn davy_jones_locker.sandbox.server:app --port 9002
 ```
 

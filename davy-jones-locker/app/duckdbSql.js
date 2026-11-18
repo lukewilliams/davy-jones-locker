@@ -17,6 +17,13 @@
 // again; or when the runner asks (loadSpatial), before it reads geometry. It
 // comes from the app's own origin (`extensionRepository`, see the README).
 // Axis order is then always x, y, as on the engine (geometry_always_xy).
+// The extensions DuckDB loads by itself when a query needs them (parquet,
+// json, icu for time zones, excel) come from the same place: it's DuckDB's
+// custom_extension_repository, so DuckDB's loads never reach its own
+// servers. That's only where DuckDB looks by default: a query can set it
+// again, LOAD from elsewhere or read any URL, and only the page's
+// Content-Security-Policy stops that (see the README). The time zone is UTC,
+// as on the engine.
 
 import { DUCKDB_WASM_VERSION, DEFAULT_EXTENSION_REPOSITORY } from './duckdbVersions.js'
 
@@ -34,7 +41,7 @@ function once(load) {
   }
 }
 
-async function startDuckdb() {
+async function startDuckdb(repository) {
   const lib = await import(/* @vite-ignore */ DUCKDB_URL)
   const bundle = await lib.selectBundle(lib.getJsDelivrBundles())
   // The worker script is cross-origin, so it's started from a same-origin blob.
@@ -44,10 +51,21 @@ async function startDuckdb() {
   const db = new lib.AsyncDuckDB(new lib.VoidLogger(), new Worker(workerUrl))
   await db.instantiate(bundle.mainModule, bundle.pthreadWorker)
   URL.revokeObjectURL(workerUrl)
-  return { db, conn: await db.connect() }
+  const conn = await db.connect()
+  await conn.query(`SET custom_extension_repository = ${literal(repository)}`)
+  // UTC, as the engine's image runs, so a TIMESTAMPTZ's date parts and casts
+  // agree with the engine's. DuckDB-wasm would otherwise take the browser's
+  // zone, as a fixed offset that ignores daylight saving. Setting it loads icu
+  // now (2 MB gzipped, cached); if the app doesn't serve icu, a query that
+  // needs time zones says so when it runs.
+  await conn.query("SET TimeZone = 'UTC'").catch(() => {})
+  return { db, conn }
 }
 
 const NEEDS_SPATIAL = /it exists in the spatial extension/
+// DuckDB's words when an extension it loads by itself isn't where it looked.
+const AUTOLOAD_FAILED = /Extension Autoloading Error:[^']*'(\w+)'/
+const SEE = 'The app serves it (davy-jones-locker-extensions): see "DuckDB\'s extensions" in the davy-jones-locker README.'
 
 // The repository as an absolute URL without a trailing slash: DuckDB fetches
 // <repository>/<DuckDB version>/<wasm_eh|wasm_mvp>/spatial.duckdb_extension.wasm.
@@ -59,14 +77,28 @@ async function loadSpatial(conn, repository) {
     await conn.query('LOAD spatial')
   } catch (e) {
     const why = String(e?.message ?? e).split('\n')[0]
-    const see = 'The app serves it (davy-jones-locker-extensions): see "DuckDB\'s extensions" in the davy-jones-locker README.'
     // DuckDB calls a file that isn't there unsigned (a dev server answers a
     // missing file with the app's page), so look for it.
     const url = /Extension "(https?:[^"]+\.wasm)"/.exec(why)?.[1]
-    if (url && !(await isWasm(url))) throw new Error(`This query needs DuckDB's spatial extension, which isn't at ${url}. ${see}`)
-    throw new Error(`This query needs DuckDB's spatial extension, which couldn't be loaded from ${repository} (${why}). ${see}`)
+    if (url && !(await isWasm(url))) throw new Error(`This query needs DuckDB's spatial extension, which isn't at ${url}. ${SEE}`)
+    throw new Error(`This query needs DuckDB's spatial extension, which couldn't be loaded from ${repository} (${why}). ${SEE}`)
   }
   await conn.query('SET geometry_always_xy = true')
+}
+
+// An extension DuckDB loads by itself, missing from the app's repository or
+// refused: the same advice as for spatial. DuckDB's own message names the
+// file when it isn't there, and otherwise says why (a signature it refused,
+// so a copy that was changed doesn't read like a missing one).
+function autoloadError(e) {
+  const message = String(e?.message ?? e)
+  const found = AUTOLOAD_FAILED.exec(message)
+  if (!found) return e
+  const name = found[1]
+  const file = /Extension (\S+\.wasm) is not available/.exec(message)?.[1]
+  if (file) return new Error(`This query needs DuckDB's ${name} extension, which isn't at ${file}. ${SEE}`)
+  const why = message.slice(found.index + found[0].length).replace(/^[:\s]+/, '').split('\n')[0].trim()
+  return new Error(`This query needs DuckDB's ${name} extension, which couldn't be loaded${why ? ` (${why})` : ''}. ${SEE}`)
 }
 
 async function isWasm(url) {
@@ -117,9 +149,16 @@ const literal = (text) => `'${text.replaceAll("'", "''")}'`
 // app serves DuckDB's extensions, relative to the page or absolute
 // (https://extensions.duckdb.org for DuckDB's own).
 export function createDuckdbSql({ extensionRepository = DEFAULT_EXTENSION_REPOSITORY } = {}) {
-  const duckdb = once(startDuckdb)
+  // Resolved when DuckDB first starts, against the page (not on import).
+  const duckdb = once(() => startDuckdb(absolute(extensionRepository)))
   const spatial = once(async () => loadSpatial((await duckdb()).conn, absolute(extensionRepository)))
-  const run = async (sql) => (await duckdb()).conn.query(sql)
+  const run = async (sql) => {
+    try {
+      return await (await duckdb()).conn.query(sql)
+    } catch (e) {
+      throw autoloadError(e)
+    }
+  }
 
   return {
     async query(sql) {

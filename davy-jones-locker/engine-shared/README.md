@@ -10,8 +10,6 @@ then point the engine's settings at those instead.
 | `postgres` | Postgres 18: the engine's database | `127.0.0.1:5432` (`POSTGRES_PORT`) |
 | `identity-mock` | an OpenID Connect provider that signs in whoever you say you are (the `identity` profile: only when asked for) | `127.0.0.1:9100` (`IDENTITY_MOCK_PORT`) |
 
-Coming here: azurite (blob storage), perhaps n8n.
-
 ## Running it
 
 ```
@@ -37,7 +35,9 @@ creates the engine's database and two roles, named and passworded in `.env`
 
 Data for SQL nodes goes in the database's `public` schema. Tables created
 there by the owner or the superuser are readable by the reader automatically;
-anyone else's need `GRANT SELECT ... TO <reader>`.
+anyone else's need `GRANT SELECT ... TO <reader>`. For a schema other than
+`public`, grant `USAGE` on it and `SELECT` on its tables, and name its tables
+in full in SQL (`db.reporting.posts`).
 
 The passwords take effect only when the database is first created. To change
 them later, use `ALTER ROLE`, or start over with `down -v`. The script can be
@@ -74,3 +74,7 @@ fails.
   wherever the Docker engine runs (in WSL, say, driven from Windows).
 - `SHARED_NETWORK` in `.env` renames the network; set the same where the
   app's compose file runs, for the engines.
+- **Two engine-shareds on one machine** clash: both want `127.0.0.1:5432`
+  and the `shared` network, and both are the compose project
+  `engine-shared`. Give the second its own `POSTGRES_PORT`,
+  `SHARED_NETWORK` and project name (`-p`), and point its engines at them.

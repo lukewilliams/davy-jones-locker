@@ -13,6 +13,9 @@ database run on the framework's engine (`davy-jones-locker` on PyPI).
 npm install --save-exact davy-jones-locker seamonster vue reka-ui @vue-flow/core @vue-flow/background
 ```
 
+Building with it needs Node 20.19 or later, or 22.12 or later (Vite 8's range,
+in the package's `engines`).
+
 ```vue
 <script setup>
 import { DavyJonesLocker } from 'davy-jones-locker'
@@ -30,13 +33,17 @@ import 'seamonster/style.css'
 | `engine-name` | `'The engine'` | what messages call the engine |
 | `storage-name` | `'davy-jones-locker'` | the open graph is kept in localStorage under `<name>:open-graph`, and ingested files in the IndexedDB database `<name>` |
 | `extension-repository` | `'duckdb-extensions'` | where the app serves DuckDB's extensions, relative to the page or absolute |
+| `theme` | `'FLOW'` | the theme, unless the Terminal's `f.Theme` has chosen another in this browser |
+| `commands` | `[]` | the app's own Terminal commands, definitions SEAMONSTER's `createCommandRegistry` takes |
 
-`title`, `theme` and anything else pass through to SEAMONSTER's `FlowgraphEditor`.
+`title` and anything else pass through to SEAMONSTER's `FlowgraphEditor`.
 
-**DuckDB's spatial extension** (geometry, and DataIngest's KML, shapefiles,
-GeoPackage and GeoJSON) is served by the app itself, from
-`extension-repository`. The package's command fetches it for the DuckDB this
-version runs; with Vite, run it before `dev` and `build`:
+**DuckDB's extensions** (spatial, parquet, json, icu for time zones, and
+excel) are served by the app itself, from `extension-repository`, so the
+editor's own loads never reach DuckDB's servers (a query's own requests are
+stopped only by the page's Content-Security-Policy: see "DuckDB's extensions"
+in the davy-jones-locker README). The package's command fetches them for the DuckDB
+this version runs; with Vite, run it before `dev` and `build`:
 
 ```json
 "scripts": {
@@ -46,9 +53,14 @@ version runs; with Vite, run it before `dev` and `build`:
 }
 ```
 
-and leave `public/duckdb-extensions/` out of git. Serve its `.gz` copies if you
-can (it's 24 MB, 6 MB gzipped), and a missing file as a 404. Without it,
-everything but spatial SQL still works.
+and leave `public/duckdb-extensions/` out of git (in the app folder's
+`.gitignore`; from the repository root's, `**/public/duckdb-extensions/`,
+since a pattern with a slash in the middle matches only beside its own
+`.gitignore`). Serve its `.gz` copies if you can (35 MB, 9 MB gzipped),
+and a missing file as a 404. Without them, Parquet, JSON, Excel, geo
+files, time zones and tables from the engine fail, saying which
+extension is missing. The browser's DuckDB runs in UTC, as the engine's
+image does.
 
 **The engine's node kinds** (an app's `nodes.py`, served by `GET /nodes`) need
 no code in the browser: once the engine is connected, the shell defines each

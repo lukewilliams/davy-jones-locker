@@ -128,6 +128,8 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
     state: server?.status?.state ?? 'unavailable',
     address: server?.status?.address ?? null,
     local: server?.status?.local === true,
+    // Whether node kinds that run on the server can reach the network.
+    nodeNetwork: server?.status?.nodeNetwork === true,
     // Disconnected on purpose (the app shell's f.Security.DisconnectBackend).
     disconnected: server?.status?.disconnected === true,
     assistant: (typeof server?.assist === 'function' && server?.status?.assistant) || null,
@@ -405,7 +407,12 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
         const source = flow.findNode(e.source)
         return source ? slotsThrough(e.sourceHandle, source.id, source.data).map((s) => s.ref) : []
       })
-    const tables = await runner.serverTables(node.data.sqlQuery ?? '', [...new Set(sources)])
+    let tables
+    try {
+      tables = await runner.serverTables(node.data.sqlQuery ?? '', [...new Set(sources)])
+    } catch {
+      return // DuckDB can't parse queries now; running the node says why
+    }
     if (flow.findNode(id) !== node) return // deleted or renamed meanwhile
     // Kept even when empty, so a graph opened later knows it's been worked out.
     const previous = node.data.sqlServerTables
@@ -851,14 +858,13 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
     () => serverStatus.value.state,
     (state, previous) => {
       if (state === 'connected') {
-        const { address, local, signIn, user } = serverStatus.value
+        const { address, local, nodeNetwork, signIn, user } = serverStatus.value
         log(`Connected to the server${address ? ` at ${address}` : ''}${user?.email ? `, signed in as ${user.email}` : ''}.`)
         if (local) {
-          log(
-            `The server is in local development mode (IS_LOCAL): ${signIn ? '' : 'it signs no one in, and '}node kinds ` +
-              'that run on it can reach the network. Keep it on your own machine.',
-            'warning',
-          )
+          const what = [!signIn && 'it signs no one in', nodeNetwork && 'node kinds that run on it can reach the network']
+            .filter(Boolean)
+            .join(', and ')
+          log(`The server is in local development mode (IS_LOCAL)${what ? `: ${what}` : ''}. Keep it on your own machine.`, 'warning')
         }
       } else if (state === 'unavailable' && serverStatus.value.disconnected) {
         log('Disconnected from the server in this browser: nothing is sent to it, and nodes that run there can\'t run.', 'note')
@@ -1045,6 +1051,14 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
     for (const e of edges) if (!nodeIds.includes(e.target)) markStale(e.target)
   }
 
+  // Every node and wire at the canvas's level (inside a subnet, the subnet's),
+  // as one deletion Ctrl/Cmd+Z brings back. Returns how many nodes went.
+  function clear() {
+    const count = flow.nodes.value.length
+    remove({ nodeIds: flow.nodes.value.map((n) => n.id), edgeIds: flow.edges.value.map((e) => e.id) })
+    return count
+  }
+
   function undoDelete() {
     const last = deletions.pop()
     if (!last) return
@@ -1088,6 +1102,6 @@ export function createFlowGraph({ sql = null, files = null, server = null } = {}
     load, setContextPoint, addNode, addConnectedNode, connect, isValidConnection, select,
     renameNode, setLabel, setOutputName, updateData, setPanelData, chooseFile, setIngestFormat, storeFieldFile,
     runNode, turnPage, showRow, addOutputReader, executeGraph, resetNode, askAssistant,
-    remove, undoDelete, onKeydown,
+    remove, clear, undoDelete, onKeydown,
   }
 }

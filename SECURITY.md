@@ -45,7 +45,8 @@ These are documented, and reports of them alone aren't needed:
 
 - **Local development signs no one in.** With `IS_LOCAL=true` and no
   `IDENTITY`, anyone who can reach the engine can use it, including its AI
-  assistant's budget, and the app's node kinds can reach the network. Keep
+  assistant's budget (and with `NODE_NETWORK=open`, the app's node kinds
+  can reach the network). Keep
   such an engine on your own machine, never on the internet or a network
   others use. A deployed engine requires sign-in. (The engine refuses
   requests from its own sandboxes either way.)

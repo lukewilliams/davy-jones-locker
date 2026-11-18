@@ -5,11 +5,10 @@ Handlers are the app's code, so trusted, but they parse what users send
 (uploaded files, other nodes' tables) with whatever libraries they use, C
 libraries among them. So they don't run in the engine, which holds the
 database's and the AI proxy's credentials: they run here, in a container
-with none, on a network it shares only with the engine. In local development
-(IS_LOCAL=true) the app's compose file gives it a way out too; otherwise it
-has none (10e will add one, through a proxy, for kinds that need it). Each
-run is a
-process of its own (child.py), killed when it passes its kind's timeout_s,
+with none, on a network it shares only with the engine. With NODE_NETWORK=open (local
+development only) the app's compose file gives it a way out too; otherwise
+it has none.
+Each run is a process of its own (child.py), killed when it passes its kind's timeout_s,
 with its memory capped at NODE_MEMORY_MB (as address space, doubled for
 allocators' reservations).
 
